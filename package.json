@@ -1,0 +1,25 @@
+{
+  "name": "asymmetric-io-mutex",
+  "version": "0.1.0",
+  "description": "Shared array buffer mutex with asymmetric, configurable input and output buffers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/*",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "jest --runInBand"
+  },
+  "keywords": [],
+  "author": "Sampsa Lohi",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^4.8.3"
+  },
+  "dependencies": {
+    "@stdlib/constants-float32": "^0.0.6",
+    "scoped-ts-log": "^0.1.0"
+  }
+}
