@@ -7,7 +7,7 @@
 
 import { EPS, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } from "@stdlib/constants-float32"
 import Log from 'scoped-ts-log'
-import { AsymmetricMutex, MutexExportFields, MutexMeta, MutexMetaField, MutexMode, MutexScope } from "./AsymmetricMutex"
+import { AsymmetricMutex, MutexExportFields, MutexMetaField, MutexMode, MutexScope, TypedNumberArray, TypedNumberArrayConstructor } from "./AsymmetricMutex"
 
 const SCOPE = 'IOMutex'
 
@@ -43,22 +43,31 @@ class IOMutex implements AsymmetricMutex {
     /** Empty field value as it was when this mutex was instantiated. */
     protected _EMPTY_FIELD: number
 
+    /** Constructor used for the view of input data fields. */
+    protected _inputDataViewConstructor?: TypedNumberArrayConstructor
+    /** Constructor used for the view of input meta fields. */
+    protected _inputMetaViewConstructor?: TypedNumberArrayConstructor
+    /** Constructor used for the view of output data fields. */
+    protected _outputDataViewConstructor: TypedNumberArrayConstructor
+    /** Constructor used for the view of output meta fields. */
+    protected _outputMetaViewConstructor: TypedNumberArrayConstructor
+
     /** Properties of the data fields contained in the buffered read arrays. */
     protected _inputDataFields: MutexMetaField[] = []
     /** Views of the buffered input data arrays. */
-    protected _inputDataViews: Float32Array[] = []
+    protected _inputDataViews: TypedNumberArray[] = []
     /** View of the read lock. */
     protected _readLockView: Int32Array = new Int32Array()
     /** Properties of the input metadata array. */
     protected _inputMetaFields: MutexMetaField[] = []
     /** View of the input metadata array. */
-    protected _inputMetaView: Float32Array | null = null
+    protected _inputMetaView: TypedNumberArray | null = null
     /** Raw buffers of output data arrays. */
     protected _outputDataBuffers: SharedArrayBuffer[] = []
     /** Properties of the data fields contained in the buffered output arrays. */
     protected _outputDataFields: MutexMetaField[] = []
     /** Views of the buffered output data arrays. */
-    protected _outputDataViews: Float32Array[] = []
+    protected _outputDataViews: TypedNumberArray[] = []
     /** Raw buffer of the write lock. */
     protected _writeLockBuffer: SharedArrayBuffer
     /** View of the write lock. */
@@ -68,7 +77,7 @@ class IOMutex implements AsymmetricMutex {
     /** Properties of the output metadata array. */
     protected _outputMetaFields: MutexMetaField[] = []
     /** View of the output metadata array. */
-    protected _outputMetaView: Float32Array | null = null
+    protected _outputMetaView: TypedNumberArray | null = null
 
     /**
      * Are there active locks in place?
@@ -88,46 +97,72 @@ class IOMutex implements AsymmetricMutex {
     /**
      * Instantiate an asymmetric, shared memory mutex. All parameters are immutable after initialization.
      * If a coupled mutex is passed, its output buffers will be used as input buffers for this mutex.
-     * @param metaFields - Global metadata fields for this mutex.
-     * @param coupledMutex - Mutex to use as reference for shared buffers.
+     * @param metaFields - Metadata fields for this mutex.
+     * @param metaViewConstructor - The view constructor to use to write into the meta buffer.
+     * @param input - Optional input object:
+     * ```
+     * {
+     *   dataViewConstructor: TypedNumberArrayConstructor // The view constructor to use to read the data buffers.
+     *   metaViewConstructor: TypedNumberArrayConstructor // The view constructor to use to read the meta buffer.
+     *   coupledMutexFields: MutexExportFields // Mutex fields to use as reference for shared buffers.
+     * }
+     * ```
      */
-    constructor (metaFields: MutexMeta, coupledMutex?: MutexExportFields) {
+    constructor (
+        metaFields: MutexMetaField[],
+        metaViewConstructor: TypedNumberArrayConstructor,
+        dataViewConstructor: TypedNumberArrayConstructor,
+        input?: {
+            metaViewConstructor: TypedNumberArrayConstructor,
+            dataViewConstructor: TypedNumberArrayConstructor,
+            coupledMutex: MutexExportFields
+        }
+    ) {
         // Set the current empty field value as this instances empty field
         this._EMPTY_FIELD = IOMutex.EMPTY_FIELD
-        // We can have either a reference mutex or individual buffers; reference mutex takes precedence.
         // Preserve room for one 32 bit integer (= 4 bytes) for lock values and the appropriate
         // amount of for metadata values.
+        // The lock views must use the 32 bit integer, because Atomics.notify() is not compatible
+        // bit the 8- or 16-bit types.
         this._writeLockBuffer = new SharedArrayBuffer(4)
         this._writeLockView = new Int32Array(this._writeLockBuffer)
-        if (metaFields.general.length) {
+        // Save construcotr types
+        this._outputMetaViewConstructor = metaViewConstructor
+        this._outputDataViewConstructor = dataViewConstructor
+        if (metaFields.length) {
             let metaLen = 0
-            for (const field of metaFields.general) {
+            for (const field of metaFields) {
                 this._outputMetaFields.push(field)
                 // Add four bytes (32 bits) for each meta field length
-                metaLen += 4*field.length
+                metaLen += metaViewConstructor.BYTES_PER_ELEMENT*field.length
             }
             this._outputMetaBuffer = new SharedArrayBuffer(metaLen)
-            this._outputMetaView = new Float32Array(this._outputMetaBuffer)
+            this._outputMetaView = new metaViewConstructor(this._outputMetaBuffer)
             // Set meta field values as empty
-            for (const field of metaFields.general) {
+            for (const field of metaFields) {
                 this._outputMetaView[field.position] = this._EMPTY_FIELD
             }
         }
         // Import buffers from the possible coupled output mutex
-        if (coupledMutex) {
+        if (input) {
             // We use the write lock of the connected mutex as our read lock
-            this._readLockView = new Int32Array(coupledMutex.lockBuffer)
+            this._readLockView = new Int32Array(input.coupledMutex.lockBuffer)
+            // Save the input buffer view constructors
+            this._inputDataViewConstructor = input.dataViewConstructor
+            this._inputMetaViewConstructor = input.metaViewConstructor
             // Coupled meta fields
-            this._inputMetaView = coupledMutex.metaBuffer ? new Float32Array(coupledMutex.metaBuffer) : null
-            for (const field of coupledMutex.metaFields) {
+            this._inputMetaView = input.coupledMutex.metaBuffer
+                                  ? new input.metaViewConstructor(input.coupledMutex.metaBuffer)
+                                  : null
+            for (const field of input.coupledMutex.metaFields) {
                 this._inputMetaFields.push(field)
             }
             // Coupled data buffers.
-            for (const field of coupledMutex.dataFields) {
+            for (const field of input.coupledMutex.dataFields) {
                 this._inputDataFields.push(field)
             }
-            for (let i=0; i<coupledMutex.dataBuffers.length; i++) {
-                this._inputDataViews[i] = new Float32Array(coupledMutex.dataBuffers[i])
+            for (let i=0; i<input.coupledMutex.dataBuffers.length; i++) {
+                this._inputDataViews[i] = new input.dataViewConstructor(input.coupledMutex.dataBuffers[i])
             }
         }
     }
@@ -238,7 +273,7 @@ class IOMutex implements AsymmetricMutex {
      * @param name - Name of the field.
      * @returns Float32Array holding the field values or null on error.
      */
-    protected _getDataFieldValue = (scope: MutexScope, index: number, fieldName: string): Float32Array | null => {
+    protected _getDataFieldValue = (scope: MutexScope, index: number, fieldName: string): TypedNumberArray | null => {
         // Select the mode-appropriate properties
         const dataViews = scope === IOMutex.MUTEX_SCOPE.INPUT
                                     ? this._inputDataViews

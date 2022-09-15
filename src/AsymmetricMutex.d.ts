@@ -22,17 +22,15 @@ export type MutexExportFields = {
     metaFields: MutexMetaField[]
 }
 
-export type MutexMeta = {
-    general: MutexMetaField[]
-    arrays: (MutexMetaField | null)[]
-}
-
 export type MutexMetaField = {
     length: number
     name: string
     position: number
-    data?: number | Float32Array | null
+    data?: number[] | TypedNumberArray | null
 }
 
 export type MutexMode = 'r' | 'w'
 export type MutexScope = 'i' | 'o'
+
+export type TypedNumberArray = Int8Array | Int16Array | Float32Array | Int32Array
+export type TypedNumberArrayConstructor = Int8ArrayConstructor | Int16ArrayConstructor | Float32ArrayConstructor | Int32ArrayConstructor
