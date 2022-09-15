@@ -7,55 +7,48 @@
 
 import { describe, expect, test } from '@jest/globals'
 import IOMutex from '../src'
-import { MutexExportFields, MutexMetaField, TypedNumberArray, TypedNumberArrayConstructor } from '../src/AsymmetricMutex'
+import { MutexExportProperties, MutexMetaField, TypedNumberArray, TypedNumberArrayConstructor } from '../src/AsymmetricMutex'
 
 const DATA_POS = 2
 const RESULTS_POS = 2
 // Create a test class that extends IOMutex
 class TestMutex extends IOMutex {
-    constructor (viewConstructor: TypedNumberArrayConstructor, metaFields: MutexMetaField[], dataFields: MutexMetaField[], dataArrays: TypedNumberArray[], coupledMutex?: MutexExportFields) {
+    constructor (viewConstructor: TypedNumberArrayConstructor, metaFields: MutexMetaField[], dataFields: MutexMetaField[], dataArrays: TypedNumberArray[], coupledMutexProps?: MutexExportProperties) {
         super(
             metaFields,
             viewConstructor,
             viewConstructor,
-            coupledMutex ?
+            coupledMutexProps ?
             {
                 metaViewConstructor: viewConstructor,
                 dataViewConstructor: viewConstructor,
-                coupledMutex: coupledMutex
+                coupledMutexProps: coupledMutexProps
             } : undefined
         )
-        this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {
-            // Initialize buffers for each data field
-            let dataLen = 0
-            for (const field of dataFields) {
-                this._outputDataFields.push({
-                    name: field.name,
-                    length: field.length,
-                    position: field.position,
-                })
-                dataLen += field.length
-            }
-            for (let i=0; i<dataArrays.length; i++) {
-                const sab = new SharedArrayBuffer(dataLen*viewConstructor.BYTES_PER_ELEMENT)
-                this._outputDataBuffers.push(sab)
-                const dataView = new viewConstructor(sab)
-                for (let j=0; j<dataFields.length; j++) {
-                    const field = dataFields[j]
-                    if (field.data) {
-                        dataView.set(field.data, field.position)
-                    } else {
-                        dataView.set(dataArrays[i], field.position)
-                    }
+        // Initialize buffers for each data field
+        let dataLen = 0
+        for (const field of dataFields) {
+            this._outputDataFields.push({
+                name: field.name,
+                length: field.length,
+                position: field.position,
+            })
+            dataLen += field.length
+        }
+        for (let i=0; i<dataArrays.length; i++) {
+            const sab = new SharedArrayBuffer(dataLen*viewConstructor.BYTES_PER_ELEMENT)
+            this._outputDataBuffers.push(sab)
+            const dataView = new viewConstructor(sab)
+            for (let j=0; j<dataFields.length; j++) {
+                const field = dataFields[j]
+                if (field.data) {
+                    dataView.set(field.data, field.position)
+                } else {
+                    dataView.set(dataArrays[i], field.position)
                 }
-                this._outputDataViews.push(dataView)
             }
-            for (const buf of (coupledMutex?.dataBuffers || [])) {
-                this._inputDataViews.push(new viewConstructor(buf))
-            }
-        }).catch(e => {
-            console.error(e)
-        })
+            this._outputDataViews.push(dataView)
+        }
     }
     get inputDataViews () {
         return this._inputDataViews
@@ -75,9 +68,6 @@ class TestMutex extends IOMutex {
         return true
     }
 }
-
-let MTX_OUT: TestMutex | null = null
-let MTX_IN: TestMutex | null = null
 
 describe('Initiation tests', () => {
     test('Class is defined', () => {
@@ -241,9 +231,9 @@ describe('Initiation tests', () => {
             }
         ],
         [
-            new Float32Array(10)
+            new Int32Array(10)
         ],
-        MTX_OUT.exportForInputCouple()
+        MTX_OUT.propertiesForCoupling()
     )
     test('Can lock and unlock array', async () => {
         const lock = await MTX_OUT.lock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
@@ -252,14 +242,12 @@ describe('Initiation tests', () => {
         expect(unlock).toStrictEqual(true)
     })
     test('Can read output buffers', async () => {
-        MTX_OUT.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+        await MTX_OUT.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
             expect(MTX_OUT.outputDataViews).toStrictEqual([
                 new Int32Array([10, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
                 new Int32Array([10, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]),
                 new Int32Array([10, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]),
             ])
-        }).catch((e) => {
-            console.error(e)
         })
     })
     test('Can write to output buffers', async () => {
@@ -271,14 +259,12 @@ describe('Initiation tests', () => {
         expect(write).toStrictEqual(true)
     })
     test('Can read input buffers', async () => {
-        MTX_IN.executeWithLock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ, () => {
+        await MTX_IN.executeWithLock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ, () => {
             expect(MTX_IN.inputDataViews).toStrictEqual([
                 new Int32Array([10, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
                 new Int32Array([10, 0, 0, 2, 4, 6, 8, 10, 18, 14, 16, 18]),
                 new Int32Array([10, 0, 0, 2, 4, 8, 16, 32, 64, 128, 256, 512]),
             ])
-        }).catch((e) => {
-            console.error(e)
         })
     })
     test('Cannot read input buffers locked by the output mutex', async () => {

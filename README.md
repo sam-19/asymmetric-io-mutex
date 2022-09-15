@@ -16,20 +16,21 @@ A JavaScript shared array buffer mutex with asymmetric input and output buffers.
 
 * The IOMutex class is meant to be extended by a custom class; most of its properties are protected and of no use unless extended.
 * Always lock the buffers before reading or modifying them (technically you don't have to, but that would kind of defeat the whole point). The `executeWithLock()` method takes care of the locking and unlocking for you.
+* An output mutex's buffers and meta fields should be passed to the new input mutex with the `propertiesForCoupling()` method.
 
 Simple usage:
 ```javascript
 class MyCustomMutex extends IOMutex {
-    constructor (viewConstructor: <any typed array constructor>, metaFields: MutexMetaField[], dataFields: MutexMetaField[], dataArrays = [] as <any typed number array>[], coupledMutexFields?: MutexExportFields) {
+    constructor (viewConstructor: <any typed array constructor>, metaFields: MutexMetaField[], dataFields: MutexMetaField[], dataArrays = [] as <any typed number array>[], coupledMutexProps?: MutexExportProperties) {
         super(
             metaFields,
             viewConstructor,
             viewConstructor,
-            coupledMutexFields ?
+            coupledMutexProps ?
             {
                 metaViewConstructor: viewConstructor,
                 dataViewConstructor: viewConstructor,
-                coupledMutexFields: coupledMutexFields
+                coupledMutexProps: coupledMutexProps
             } : undefined
         )
         this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {

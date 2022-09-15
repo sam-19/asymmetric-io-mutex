@@ -14,7 +14,7 @@ export interface AsymmetricMutex {
     waitForFieldUpdate: (fieldType: 'data' | 'meta', fieldIndex: number, dataIndex?: number) => Promise<number|null>
 }
 
-export type MutexExportFields = {
+export type MutexExportProperties = {
     dataBuffers: SharedArrayBuffer[]
     dataFields: MutexMetaField[]
     lockBuffer: SharedArrayBuffer

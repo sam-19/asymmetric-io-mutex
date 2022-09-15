@@ -7,7 +7,7 @@
 
 import { EPS, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } from "@stdlib/constants-float32"
 import Log from 'scoped-ts-log'
-import { AsymmetricMutex, MutexExportFields, MutexMetaField, MutexMode, MutexScope, TypedNumberArray, TypedNumberArrayConstructor } from "./AsymmetricMutex"
+import { AsymmetricMutex, MutexExportProperties, MutexMetaField, MutexMode, MutexScope, TypedNumberArray, TypedNumberArrayConstructor } from "./AsymmetricMutex"
 
 const SCOPE = 'IOMutex'
 
@@ -104,7 +104,7 @@ class IOMutex implements AsymmetricMutex {
      * {
      *   dataViewConstructor: TypedNumberArrayConstructor // The view constructor to use to read the data buffers.
      *   metaViewConstructor: TypedNumberArrayConstructor // The view constructor to use to read the meta buffer.
-     *   coupledMutexFields: MutexExportFields // Mutex fields to use as reference for shared buffers.
+     *   coupledMutexProps: MutexExportProperties // Mutex fields to use as reference for shared buffers.
      * }
      * ```
      */
@@ -115,7 +115,7 @@ class IOMutex implements AsymmetricMutex {
         input?: {
             metaViewConstructor: TypedNumberArrayConstructor,
             dataViewConstructor: TypedNumberArrayConstructor,
-            coupledMutex: MutexExportFields
+            coupledMutexProps: MutexExportProperties
         }
     ) {
         // Set the current empty field value as this instances empty field
@@ -146,23 +146,23 @@ class IOMutex implements AsymmetricMutex {
         // Import buffers from the possible coupled output mutex
         if (input) {
             // We use the write lock of the connected mutex as our read lock
-            this._readLockView = new Int32Array(input.coupledMutex.lockBuffer)
+            this._readLockView = new Int32Array(input.coupledMutexProps.lockBuffer)
             // Save the input buffer view constructors
             this._inputDataViewConstructor = input.dataViewConstructor
             this._inputMetaViewConstructor = input.metaViewConstructor
             // Coupled meta fields
-            this._inputMetaView = input.coupledMutex.metaBuffer
-                                  ? new input.metaViewConstructor(input.coupledMutex.metaBuffer)
+            this._inputMetaView = input.coupledMutexProps.metaBuffer
+                                  ? new input.metaViewConstructor(input.coupledMutexProps.metaBuffer)
                                   : null
-            for (const field of input.coupledMutex.metaFields) {
+            for (const field of input.coupledMutexProps.metaFields) {
                 this._inputMetaFields.push(field)
             }
             // Coupled data buffers.
-            for (const field of input.coupledMutex.dataFields) {
+            for (const field of input.coupledMutexProps.dataFields) {
                 this._inputDataFields.push(field)
             }
-            for (let i=0; i<input.coupledMutex.dataBuffers.length; i++) {
-                this._inputDataViews[i] = new input.dataViewConstructor(input.coupledMutex.dataBuffers[i])
+            for (let i=0; i<input.coupledMutexProps.dataBuffers.length; i++) {
+                this._inputDataViews[i] = new input.dataViewConstructor(input.coupledMutexProps.dataBuffers[i])
             }
         }
     }
@@ -438,21 +438,6 @@ class IOMutex implements AsymmetricMutex {
     }
 
     /**
-     * Export this Mutex's output buffers and field descriptions to be used in a coupled
-     * Mutex as input buffers.
-     * @returns Object containing this Mutex's output buffers and field descriptions.
-     */
-    exportForInputCouple () {
-        return {
-            dataBuffers: this._outputDataBuffers,
-            dataFields: this._outputDataFields,
-            lockBuffer: this._writeLockBuffer,
-            metaBuffer: this._outputMetaBuffer,
-            metaFields: this._outputMetaFields,
-        }
-    }
-
-    /**
      * Check if the shared array is available for the given mode of operation.
      * @param scope - Mutex scope to use.
      * @param mode - Mode of operation.
@@ -475,14 +460,14 @@ class IOMutex implements AsymmetricMutex {
      * @return Success of locking as true/false.
      */
     async lock (scope: MutexScope, mode: MutexMode, maxTries = 500) {
-        // This async construction may be futile, but it'll be ready when Atomics.asyncLock()
+        // This async construction may be futile now, but it'll be ready when Atomics.asyncLock()
         // is made available.
         return new Promise<boolean>((resolve) => {
             const input = (mode === IOMutex.OPERATION_MODE.READ)
             const lockView = this._getLockView(scope)
             let tries = 0
             while (tries < maxTries) {
-                // Multiple inputs can access the same read-locked buffer, so check for that first
+                // Multiple mutexes can access the same read-locked buffer as input, so check for that first
                 if (input) {
                     const readCount = Atomics.load(lockView, 0)
                     if (
@@ -509,7 +494,8 @@ class IOMutex implements AsymmetricMutex {
                     Atomics.wait(
                         lockView,
                         0,
-                        input ? IOMutex.WRITE_LOCK_VALUE : Atomics.load(lockView, 0)
+                        input ? IOMutex.WRITE_LOCK_VALUE : Atomics.load(lockView, 0),
+                        10
                     )
                 }
                 tries++
@@ -548,6 +534,21 @@ class IOMutex implements AsymmetricMutex {
                 )
             }
         })
+    }
+
+    /**
+     * Export this Mutex's output buffers and field descriptions to be used in a coupled
+     * Mutex as input buffers.
+     * @returns Object containing this Mutex's output buffers and field descriptions.
+     */
+    propertiesForCoupling () {
+        return {
+            dataBuffers: this._outputDataBuffers,
+            dataFields: this._outputDataFields,
+            lockBuffer: this._writeLockBuffer,
+            metaBuffer: this._outputMetaBuffer,
+            metaFields: this._outputMetaFields,
+        }
     }
 
     /**
