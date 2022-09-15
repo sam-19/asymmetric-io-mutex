@@ -1,5 +1,5 @@
 /**
- * Asymmetric IO Mutex tests.
+ * Asymmetric I/O Mutex tests.
  * @package    asymmetric-io-mutex
  * @copyright  2022 Sampsa Lohi
  * @license    MIT
@@ -233,7 +233,7 @@ describe('Initiation tests', () => {
         [
             new Int32Array(10)
         ],
-        MTX_OUT.propertiesForCoupling()
+        MTX_OUT.propertiesForCoupling
     )
     test('Can lock and unlock array', async () => {
         const lock = await MTX_OUT.lock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)

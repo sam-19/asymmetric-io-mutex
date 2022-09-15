@@ -1,4 +1,4 @@
-# Asymmetric IO Mutex
+# Asymmetric I/O Mutex
 A JavaScript shared array buffer mutex with asymmetric input and output buffers.
 
 ## Installation
@@ -16,7 +16,8 @@ A JavaScript shared array buffer mutex with asymmetric input and output buffers.
 
 * The IOMutex class is meant to be extended by a custom class; most of its properties are protected and of no use unless extended.
 * Always lock the buffers before reading or modifying them (technically you don't have to, but that would kind of defeat the whole point). The `executeWithLock()` method takes care of the locking and unlocking for you.
-* An output mutex's buffers and meta fields should be passed to the new input mutex with the `propertiesForCoupling()` method.
+* An output mutex's buffers and meta fields should be passed to the new input mutex with the `propertiesForCoupling` property.
+* Int32Array is the expected metadata buffer type and the default empty field value is set accordingly. If you decide to use some other type to view the metadata buffers, set IOMutex.EMPTY_FIELD **before** you initiate your mutex!
 
 Simple usage:
 ```javascript

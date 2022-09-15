@@ -7,7 +7,7 @@
 
 import { EPS, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } from "@stdlib/constants-float32"
 import Log from 'scoped-ts-log'
-import { AsymmetricMutex, MutexExportProperties, MutexMetaField, MutexMode, MutexScope, TypedNumberArray, TypedNumberArrayConstructor } from "./AsymmetricMutex"
+import { AsymmetricMutex, MutexExportProperties, MutexMetaField, MutexMode, MutexScope, ReadonlyTypedArray, TypedNumberArray, TypedNumberArrayConstructor } from "./AsymmetricMutex"
 
 const SCOPE = 'IOMutex'
 
@@ -55,13 +55,13 @@ class IOMutex implements AsymmetricMutex {
     /** Properties of the data fields contained in the buffered read arrays. */
     protected _inputDataFields: MutexMetaField[] = []
     /** Views of the buffered input data arrays. */
-    protected _inputDataViews: TypedNumberArray[] = []
+    protected _inputDataViews: ReadonlyTypedArray[] = []
     /** View of the read lock. */
     protected _readLockView: Int32Array = new Int32Array()
     /** Properties of the input metadata array. */
     protected _inputMetaFields: MutexMetaField[] = []
     /** View of the input metadata array. */
-    protected _inputMetaView: TypedNumberArray | null = null
+    protected _inputMetaView: ReadonlyTypedArray | null = null
     /** Raw buffers of output data arrays. */
     protected _outputDataBuffers: SharedArrayBuffer[] = []
     /** Properties of the data fields contained in the buffered output arrays. */
@@ -200,10 +200,18 @@ class IOMutex implements AsymmetricMutex {
     }
 
     /**
-     * The SharedArrayBuffer holding the write lock state of this Mutex.
+     * Export this Mutex's output buffers and field descriptions to be used in a coupled
+     * Mutex as input buffers.
+     * @returns Object containing this Mutex's output buffers and field descriptions.
      */
-    get writeLockBuffer () {
-        return this._writeLockBuffer
+    get propertiesForCoupling () {
+        return {
+            dataBuffers: this._outputDataBuffers,
+            dataFields: this._outputDataFields,
+            lockBuffer: this._writeLockBuffer,
+            metaBuffer: this._outputMetaBuffer,
+            metaFields: this._outputMetaFields,
+        }
     }
 
     /**
@@ -218,6 +226,13 @@ class IOMutex implements AsymmetricMutex {
      */
     get outputMetaFields () {
         return this._outputMetaFields
+    }
+
+    /**
+     * The SharedArrayBuffer holding the write lock state of this Mutex.
+     */
+    get writeLockBuffer () {
+        return this._writeLockBuffer
     }
 
     /**
@@ -534,21 +549,6 @@ class IOMutex implements AsymmetricMutex {
                 )
             }
         })
-    }
-
-    /**
-     * Export this Mutex's output buffers and field descriptions to be used in a coupled
-     * Mutex as input buffers.
-     * @returns Object containing this Mutex's output buffers and field descriptions.
-     */
-    propertiesForCoupling () {
-        return {
-            dataBuffers: this._outputDataBuffers,
-            dataFields: this._outputDataFields,
-            lockBuffer: this._writeLockBuffer,
-            metaBuffer: this._outputMetaBuffer,
-            metaFields: this._outputMetaFields,
-        }
     }
 
     /**
