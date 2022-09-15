@@ -58,11 +58,6 @@ class MyCustomMutex extends IOMutex {
                 }
                 this._outputDataViews.push(dataView)
             }
-            if (coupledMutexFields) {
-                for (const buf of (coupledMutexFields.dataBuffers || [])) {
-                    this._inputDataViews.push(new coupledMutexFields.dataViewConstructor(buf))
-                }
-            }
         }).catch(e => {
             console.error(e)
         })
