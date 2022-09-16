@@ -69,7 +69,7 @@ class TestMutex extends IOMutex {
     }
 }
 
-describe('Initiation tests', () => {
+describe('IOMutex tests', () => {
     test('Class is defined', () => {
         expect(IOMutex).toBeDefined()
     })
@@ -142,6 +142,75 @@ describe('Initiation tests', () => {
         )
         await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
             expect(int32Mutex.outputDataViews).toStrictEqual([new Int32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
+        })
+        const uint8Mutex = new TestMutex(
+            Uint8Array,
+            [
+                {
+                    length: 1,
+                    name: 'test',
+                    position: 0
+                }
+            ],
+            [
+                {
+                    length: 10,
+                    name: 'data-array',
+                    position: 0
+                }
+            ],
+            [
+                new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+            ]
+        )
+        await uint8Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            expect(uint8Mutex.outputDataViews).toStrictEqual([new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
+        })
+        const uint16Mutex = new TestMutex(
+            Uint16Array,
+            [
+                {
+                    length: 1,
+                    name: 'test',
+                    position: 0
+                }
+            ],
+            [
+                {
+                    length: 10,
+                    name: 'data-array',
+                    position: 0
+                }
+            ],
+            [
+                new Uint16Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+            ]
+        )
+        await uint16Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            expect(uint16Mutex.outputDataViews).toStrictEqual([new Uint16Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
+        })
+        const uint32Mutex = new TestMutex(
+            Uint32Array,
+            [
+                {
+                    length: 1,
+                    name: 'test',
+                    position: 0
+                }
+            ],
+            [
+                {
+                    length: 10,
+                    name: 'data-array',
+                    position: 0
+                }
+            ],
+            [
+                new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+            ]
+        )
+        await uint32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            expect(uint32Mutex.outputDataViews).toStrictEqual([new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
         })
         const float32Mutex = new TestMutex(
             Float32Array,
@@ -278,5 +347,32 @@ describe('Initiation tests', () => {
         }
         const writeUnlock = MTX_OUT.unlock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
         expect(writeUnlock).toStrictEqual(true)
+    })
+    test('Can execute other methods while waiting for lock', async () => {
+        const writeLock = await MTX_OUT.lock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
+        expect(writeLock).toStrictEqual(true)
+        let gotLock = null as null | boolean
+        try {
+            let resolveAllDone: null | (() => void) = null
+            const allDone = new Promise<void>(resolve => {
+                resolveAllDone = resolve
+            })
+            MTX_IN.lock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ).then((result) => {
+                gotLock = result
+                expect(gotLock).toStrictEqual(true)
+                if (resolveAllDone) {
+                    resolveAllDone()
+                }
+            }).catch((e) => {
+                console.error(e)
+            })
+            const outArray = MTX_IN.outputDataViews[0]
+            expect(gotLock).toStrictEqual(null)
+            expect(outArray).toStrictEqual(new Int32Array([10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+            MTX_OUT.unlock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
+            await allDone
+        } catch (e) {
+            console.error(e)
+        }
     })
 })

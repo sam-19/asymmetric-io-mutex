@@ -11,6 +11,14 @@ import { AsymmetricMutex, MutexExportProperties, MutexMetaField, MutexMode, Mute
 
 const SCOPE = 'IOMutex'
 
+/**
+ * Returns a promise that resolves after the given time.
+ * @param duration - Time to wait in milliseconds.
+ * @returns Promise
+ */
+const sleep = async (duration: number): Promise<void> => {
+    return new Promise<void>(resolve => setTimeout(resolve, duration))
+}
 class IOMutex implements AsymmetricMutex {
 
     /**
@@ -474,22 +482,21 @@ class IOMutex implements AsymmetricMutex {
      * @param maxTries - Number of times the mutex will try again if the buffer is locked.
      * @return Success of locking as true/false.
      */
-    async lock (scope: MutexScope, mode: MutexMode, maxTries = 500) {
+    async lock (scope: MutexScope, mode: MutexMode, maxTries = 50) {
         // This async construction may be futile now, but it'll be ready when Atomics.asyncLock()
         // is made available.
-        return new Promise<boolean>((resolve) => {
+        return new Promise<boolean>(async (resolve) => {
             const input = (mode === IOMutex.OPERATION_MODE.READ)
             const lockView = this._getLockView(scope)
-            let tries = 0
-            while (tries < maxTries) {
+            let retries = 0
+            while (retries < maxTries) {
+                const curValue = Atomics.load(lockView, 0)
                 // Multiple mutexes can access the same read-locked buffer as input, so check for that first
-                if (input) {
-                    const readCount = Atomics.load(lockView, 0)
+                if (input && curValue >= 0) {
                     if (
-                        readCount >= 0 &&
                         // We must do a compared exchange as another mutex may have already changed the value
-                        Atomics.compareExchange(lockView, 0, readCount, readCount + IOMutex.READ_LOCK_VALUE)
-                        === readCount
+                        Atomics.compareExchange(lockView, 0, curValue, curValue + IOMutex.READ_LOCK_VALUE)
+                        === curValue
                     ) {
                         this._lockScope[scope][mode] = true
                         Atomics.notify(lockView, 0)
@@ -505,17 +512,20 @@ class IOMutex implements AsymmetricMutex {
                     resolve(true)
                     break
                 } else {
-                    // Else, keep waiting for the lock to release
-                    Atomics.wait(
-                        lockView,
-                        0,
-                        input ? IOMutex.WRITE_LOCK_VALUE : Atomics.load(lockView, 0),
-                        10
-                    )
+                    // Else, keep waiting for the lock to release (wait 90 ms, sleep 10 ms)
+                    await Promise.all([
+                        Atomics.wait(
+                            lockView,
+                            0,
+                            input ? IOMutex.WRITE_LOCK_VALUE : Atomics.load(lockView, 0),
+                            90
+                        ),
+                        sleep(10)
+                    ])
                 }
-                tries++
+                retries++
             }
-            if (tries === maxTries) {
+            if (retries === maxTries) {
                 resolve(false)
             }
         })
