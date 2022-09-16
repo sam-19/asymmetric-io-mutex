@@ -479,7 +479,7 @@ class IOMutex implements AsymmetricMutex {
      * buffer is available for the appropriate operation.
      * @param scope - Mutex scope.
      * @param mode - Mode of operation.
-     * @param maxTries - Number of times the mutex will try again if the buffer is locked.
+     * @param maxTries - Number of times the mutex will try again (minus the first try) if the buffer is locked. Each try lasts a maximum of 100 ms (optional, default 50 tries = 5 seconds).
      * @return Success of locking as true/false.
      */
     async lock (scope: MutexScope, mode: MutexMode, maxTries = 50) {
@@ -512,7 +512,9 @@ class IOMutex implements AsymmetricMutex {
                     resolve(true)
                     break
                 } else {
-                    // Else, keep waiting for the lock to release (wait 90 ms, sleep 10 ms)
+                    // Else, keep waiting for the lock to release (wait for 90 ms, sleep for 10 ms).
+                    // TODO: Should there be a wait line for same operation lock attempts
+                    //       (to avoid race conditions between same operation requests)?
                     await Promise.all([
                         Atomics.wait(
                             lockView,
