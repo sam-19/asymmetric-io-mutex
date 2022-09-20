@@ -1,6 +1,6 @@
 {
   "name": "asymmetric-io-mutex",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "Shared array buffer mutex with asymmetric, configurable input and output buffers",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -24,5 +24,13 @@
   "dependencies": {
     "@stdlib/constants-float32": "^0.0.6",
     "scoped-ts-log": "^0.1.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sam-19/asymmetric-io-mutex.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sam-19/asymmetric-io-mutex/issues"
+  },
+  "homepage": "https://github.com/sam-19/asymmetric-io-mutex#readme"
 }
