@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@stdlib/constants-float32": "^0.0.6",
-    "scoped-ts-log": "^0.1.0"
+    "scoped-ts-log": "^0.2.0"
   },
   "repository": {
     "type": "git",
