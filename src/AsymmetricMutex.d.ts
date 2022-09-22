@@ -33,7 +33,7 @@ export type MutexMetaField = {
     length: number
     name: string
     position: number
-    data?: number[] | TypedNumberArray | null
+    data?: number[] | TypedNumberArray
 }
 
 export type MutexMode = 'r' | 'w'

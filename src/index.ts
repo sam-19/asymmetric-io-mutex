@@ -19,7 +19,7 @@ const SCOPE = 'IOMutex'
 const sleep = async (duration: number): Promise<void> => {
     return new Promise<void>(resolve => setTimeout(resolve, duration))
 }
-class IOMutex implements AsymmetricMutex {
+export default class IOMutex implements AsymmetricMutex {
 
     /**
      * Scope can be either of:
@@ -650,4 +650,4 @@ class IOMutex implements AsymmetricMutex {
     }
 }
 
-export default IOMutex
+export { MutexExportProperties, MutexMetaField, MutexMode, MutexScope }
