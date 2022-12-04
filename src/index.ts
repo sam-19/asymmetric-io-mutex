@@ -564,6 +564,29 @@ export default class IOMutex implements AsymmetricMutex {
     }
 
     /**
+     * Remove all references to buffers in this mutex, releasing the
+     * ouput side to GC once they are no longer referenced in running
+     * methods.
+     *
+     * **WARNING**: This mutex will irreversibly lose the ability to access
+     *            data contained in the released buffes.
+     */
+    releaseBuffers () {
+        this._inputDataFields.splice(0)
+        this._inputDataViews.splice(0)
+        this._inputMetaView = null
+        this._outputDataViews.splice(0)
+        this._outputDataFields.splice(0)
+        this._outputDataBuffers.splice(0)
+        this._outputMetaView = null
+        this._outputMetaFields.splice(0)
+        this._outputMetaBuffer = null
+        this._readLockView = new Int32Array()
+        this._writeLockView = new Int32Array()
+        this._writeLockBuffer = new SharedArrayBuffer(0)
+    }
+
+    /**
      * Remove a lock for the shared array buffer for the given mode.
      * @param scope - Mutex scope.
      * @param mode - Mode of operation.

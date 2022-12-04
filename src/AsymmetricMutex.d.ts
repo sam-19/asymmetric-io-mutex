@@ -17,6 +17,7 @@ export interface AsymmetricMutex {
     isAvailable: (scope: MutexScope, mode: MutexMode) => boolean
     lock: (scope: MutexScope, mode: MutexMode) => Promise<boolean>
     onceAvailable: (scope: MutexScope, mode: MutexMode) => Promise<void>
+    releaseBuffers: () => void
     unlock: (scope: MutexScope, mode: MutexMode) => boolean
     waitForFieldUpdate: (fieldType: 'data' | 'meta', fieldIndex: number, dataIndex?: number) => Promise<number|null>
 }
