@@ -7,7 +7,7 @@
 
 import { EPS, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } from "@stdlib/constants-float32"
 import Log from 'scoped-ts-log'
-import { AsymmetricMutex, MutexExportProperties, MutexMetaField, MutexMode, MutexScope, ReadonlyTypedArray, TypedNumberArray, TypedNumberArrayConstructor } from "./AsymmetricMutex"
+import { ArrayBufferEntry, ArrayBufferList, ArrayBufferPart, AsymmetricMutex, MutexExportProperties, MutexMetaField, MutexMode, MutexScope, ReadonlyTypedArray, TypedNumberArray, TypedNumberArrayConstructor } from "./AsymmetricMutex"
 
 const SCOPE = 'IOMutex'
 
@@ -21,6 +21,12 @@ const sleep = async (duration: number): Promise<void> => {
 }
 export default class IOMutex implements AsymmetricMutex {
 
+    /** Byte length of the lock element (= start of the meta array). */
+    static readonly LOCK_LENGTH = 1
+    /** Index of the buffer lock position. */
+    static readonly LOCK_POS = 0
+    /** Array index or value that hasn't been assigned yet. */
+    static readonly UNASSIGNED_VALUE = -1
     /**
      * Scope can be either of:
      * * `i` for input.
@@ -46,46 +52,34 @@ export default class IOMutex implements AsymmetricMutex {
     /** Array value of output-locked buffer. */
     static readonly WRITE_LOCK_VALUE = -1
 
+    /** Starting index (lock position) of the main buffer. */
+    protected _BUFFER_START = 0
+
     /** Internal static empty field value. */
     protected static _EMPTY_FIELD = MIN_SAFE_INTEGER
     /** Empty field value as it was when this mutex was instantiated. */
     protected _EMPTY_FIELD: number
 
-    /** Constructor used for the view of input data fields. */
-    protected _inputDataViewConstructor?: TypedNumberArrayConstructor
-    /** Constructor used for the view of input meta fields. */
-    protected _inputMetaViewConstructor?: TypedNumberArrayConstructor
-    /** Constructor used for the view of output data fields. */
-    protected _outputDataViewConstructor: TypedNumberArrayConstructor
-    /** Constructor used for the view of output meta fields. */
-    protected _outputMetaViewConstructor: TypedNumberArrayConstructor
-
+    /** The master buffer holding all of the data saved in this mutex. */
+    protected _buffer: SharedArrayBuffer | null = null
     /** Properties of the data fields contained in the buffered read arrays. */
     protected _inputDataFields: MutexMetaField[] = []
     /** Views of the buffered input data arrays. */
     protected _inputDataViews: ReadonlyTypedArray[] = []
     /** View of the read lock. */
-    protected _readLockView: Int32Array = new Int32Array()
+    protected _readLockView: Int32Array | null = null
     /** Properties of the input metadata array. */
     protected _inputMetaFields: MutexMetaField[] = []
     /** View of the input metadata array. */
     protected _inputMetaView: ReadonlyTypedArray | null = null
-    /** Raw buffers of output data arrays. */
-    protected _outputDataBuffers: SharedArrayBuffer[] = []
-    /** Properties of the data fields contained in the buffered output arrays. */
-    protected _outputDataFields: MutexMetaField[] = []
-    /** Views of the buffered output data arrays. */
-    protected _outputDataViews: TypedNumberArray[] = []
-    /** Raw buffer of the write lock. */
-    protected _writeLockBuffer: SharedArrayBuffer
-    /** View of the write lock. */
-    protected _writeLockView: Int32Array
-    /** Raw buffers of the output metadata array. */
-    protected _outputMetaBuffer: SharedArrayBuffer | null = null
-    /** Properties of the output metadata array. */
-    protected _outputMetaFields: MutexMetaField[] = []
-    /** View of the output metadata array. */
-    protected _outputMetaView: TypedNumberArray | null = null
+    /** Output data arrays. */
+    protected _outputData: ArrayBufferList | null = null
+    /** Array position where the actual data starts (and field entries end). */
+    protected _outputDataPosition = 0
+    /** Write side lock. */
+    protected _writeLock: ArrayBufferPart&{ view: Int32Array | null } // Write lock must be Int32
+    /** Output metadata array. */
+    protected _outputMeta: ArrayBufferEntry
 
     /**
      * Are there active locks in place?
@@ -117,14 +111,9 @@ export default class IOMutex implements AsymmetricMutex {
      * ```
      */
     constructor (
-        metaFields: MutexMetaField[],
-        metaViewConstructor: TypedNumberArrayConstructor,
-        dataViewConstructor: TypedNumberArrayConstructor,
-        input?: {
-            metaViewConstructor: TypedNumberArrayConstructor,
-            dataViewConstructor: TypedNumberArrayConstructor,
-            coupledMutexProps: MutexExportProperties
-        }
+        metaFields?: MutexMetaField[],
+        dataFields?: MutexMetaField[],
+        coupledMutexProps?: MutexExportProperties,
     ) {
         // Set the current empty field value as this instances empty field
         this._EMPTY_FIELD = IOMutex.EMPTY_FIELD
@@ -132,45 +121,60 @@ export default class IOMutex implements AsymmetricMutex {
         // amount of for metadata values.
         // The lock views must use the 32 bit integer, because Atomics.notify() is not compatible
         // bit the 8- or 16-bit types.
-        this._writeLockBuffer = new SharedArrayBuffer(4)
-        this._writeLockView = new Int32Array(this._writeLockBuffer)
-        // Save construcotr types
-        this._outputMetaViewConstructor = metaViewConstructor
-        this._outputDataViewConstructor = dataViewConstructor
-        if (metaFields.length) {
-            let metaLen = 0
-            for (const field of metaFields) {
-                this._outputMetaFields.push(field)
-                // Add four bytes (32 bits) for each meta field length
-                metaLen += metaViewConstructor.BYTES_PER_ELEMENT*field.length
-            }
-            this._outputMetaBuffer = new SharedArrayBuffer(metaLen)
-            this._outputMetaView = new metaViewConstructor(this._outputMetaBuffer)
-            // Set meta field values as empty
-            for (const field of metaFields) {
-                this._outputMetaView[field.position] = this._EMPTY_FIELD
-            }
+        this._writeLock = {
+            buffer: null,
+            fields: [],
+            length: 1,
+            position: 0,
+            view: null,
+        }
+        this._outputMeta = {
+            array: {
+                length: IOMutex.UNASSIGNED_VALUE,
+                position: IOMutex.UNASSIGNED_VALUE,
+                view: null,
+            },
+            buffer: null,
+            fields: [],
+            length: 0,
+            position: IOMutex.LOCK_LENGTH,
+        }
+        // Save possible constructors and initialize field properties
+        if (metaFields) {
+            this.setMetaFields(metaFields)
+        }
+        if (dataFields) {
+            this.setDataFields(dataFields)
         }
         // Import buffers from the possible coupled output mutex
-        if (input) {
+        if (coupledMutexProps?.buffer) {
             // We use the write lock of the connected mutex as our read lock
-            this._readLockView = new Int32Array(input.coupledMutexProps.lockBuffer)
-            // Save the input buffer view constructors
-            this._inputDataViewConstructor = input.dataViewConstructor
-            this._inputMetaViewConstructor = input.metaViewConstructor
-            // Coupled meta fields
-            this._inputMetaView = input.coupledMutexProps.metaBuffer
-                                  ? new input.metaViewConstructor(input.coupledMutexProps.metaBuffer)
+            this._readLockView = new Int32Array(
+                coupledMutexProps.buffer,
+                (coupledMutexProps.bufferStart + IOMutex.LOCK_POS)*4,
+                IOMutex.LOCK_LENGTH
+            )
+            // Coupled meta
+            this._inputMetaView = coupledMutexProps.meta?.array.view
+                                  ? coupledMutexProps.meta?.array.view
                                   : null
-            for (const field of input.coupledMutexProps.metaFields) {
-                this._inputMetaFields.push(field)
+            if (coupledMutexProps.meta) {
+                for (const field of coupledMutexProps.meta.fields) {
+                    this._inputMetaFields.push(field)
+                }
             }
-            // Coupled data buffers.
-            for (const field of input.coupledMutexProps.dataFields) {
-                this._inputDataFields.push(field)
-            }
-            for (let i=0; i<input.coupledMutexProps.dataBuffers.length; i++) {
-                this._inputDataViews[i] = new input.dataViewConstructor(input.coupledMutexProps.dataBuffers[i])
+            // Coupled data
+            if (coupledMutexProps.data) {
+                // Data fields are the same in each item
+                for (const field of coupledMutexProps.data.fields) {
+                    this._inputDataFields.push(field)
+                }
+                for (let i=0; i<coupledMutexProps.data.arrays.length; i++) {
+                    const dataArray = coupledMutexProps.data.arrays[i]
+                    if (dataArray.view) {
+                        this._inputDataViews[i] = dataArray.view
+                    }
+                }
             }
         }
     }
@@ -200,6 +204,11 @@ export default class IOMutex implements AsymmetricMutex {
         IOMutex._EMPTY_FIELD = value
     }
 
+    /** Starting position of the part allocated to this mutex in the buffer. */
+    get BUFFER_START (): number {
+        return this._BUFFER_START
+    }
+
     /**
      * The empty field value of this instance (cannot be changed after initialization).
      */
@@ -214,33 +223,47 @@ export default class IOMutex implements AsymmetricMutex {
      */
     get propertiesForCoupling () {
         return {
-            dataBuffers: this._outputDataBuffers,
-            dataFields: this._outputDataFields,
-            lockBuffer: this._writeLockBuffer,
-            metaBuffer: this._outputMetaBuffer,
-            metaFields: this._outputMetaFields,
+            buffer: this._buffer,
+            bufferStart: this.BUFFER_START,
+            data: this._outputData,
+            meta: this._outputMeta,
         }
+    }
+
+    /**
+     * Typed number array views of the data arrays.
+     */
+    get outputDataViews (): (TypedNumberArray | null)[] {
+        if (!this._outputData?.arrays) {
+            return []
+        }
+        const views = this._outputData.arrays.map(a => a.view)
+        return views
     }
 
     /**
      * The SharedArrayBuffer holding the output buffer meta field data.
      */
-    get outputMetaBuffer () {
-        return this._outputMetaBuffer
+    get outputMetaView () {
+        return this._outputMeta.array.view
     }
 
     /**
      * The array of objects holding the output buffer meta fields.
      */
     get outputMetaFields () {
-        return this._outputMetaFields
+        return this._outputMeta.fields
     }
 
     /**
-     * The SharedArrayBuffer holding the write lock state of this Mutex.
+     * The SharedArrayBuffer holding the write lock state of this mutex.
+     * The lock value is stored at IOMutex.LOCK_POS index of a
+     * Int32Array view of the buffer.
+     * @example
+     * const lockValue = new Int32Array(M.writelockBuffer)[IOMutex.LOCK_POS]
      */
     get writeLockBuffer () {
-        return this._writeLockBuffer
+        return this._writeLock.buffer
     }
 
     /**
@@ -259,16 +282,6 @@ export default class IOMutex implements AsymmetricMutex {
     /////////////////////////////////////////////////////////////////////////
 
     /**
-     * Return the appropriate lock view for the given `scope`.
-     * @param scope - Mutex scope to use.
-     * @returns Buffer view as an Int32Array.
-     */
-    protected _getLockView = (scope: MutexScope) => {
-        return scope === IOMutex.MUTEX_SCOPE.INPUT
-                         ? this._readLockView : this._writeLockView
-    }
-
-    /**
      * Get the properties of a data field.
      * Will return null if a field of the given name is not found, and as such
      * can be used to check if a field exists.
@@ -280,7 +293,7 @@ export default class IOMutex implements AsymmetricMutex {
         // Select the mode-appropriate properties
         const dataFields = scope === IOMutex.MUTEX_SCOPE.INPUT
                                      ? this._inputDataFields
-                                     : this._outputDataFields
+                                     : this._outputData?.fields || []
         for (const field of dataFields) {
             if (field.name === fieldName) {
                 return field
@@ -296,25 +309,42 @@ export default class IOMutex implements AsymmetricMutex {
      * @param name - Name of the field.
      * @returns Float32Array holding the field values or null on error.
      */
-    protected _getDataFieldValue = (scope: MutexScope, index: number, fieldName: string): TypedNumberArray | null => {
+    protected _getDataFieldValue = async (scope: MutexScope, index: number, fieldName: string) => {
         // Select the mode-appropriate properties
         const dataViews = scope === IOMutex.MUTEX_SCOPE.INPUT
                                     ? this._inputDataViews
-                                    : this._outputDataViews
+                                    : this._outputData?.arrays.map(a => a.view).filter(v => v) as ReadonlyTypedArray[]
         const dataFields = scope === IOMutex.MUTEX_SCOPE.INPUT
                                      ? this._inputDataFields
-                                     : this._outputDataFields
+                                     : this._outputData?.fields || []
         if (index < 0 || index >= dataViews.length) {
             Log.error(`Could not get ${fieldName} field value with an out of bound index ${index} (${this._inputDataViews.length} data buffers).`, SCOPE)
             return null
         }
-        for (const field of dataFields) {
-            if (field.name === fieldName) {
-                return dataViews[index].subarray(field.position, field.position + field.length)
+        return this.executeWithLock(scope, IOMutex.OPERATION_MODE.READ, () => {
+            for (const field of dataFields) {
+                if (field.name === fieldName) {
+                    const value = dataViews[index].subarray(field.position, field.position + field.length)
+                    if (field.constructor.name === 'Int32Array') {
+                        return value
+                    } else {
+                        return new field.constructor(value.buffer, value.byteOffset, value.byteLength/4)
+                    }
+                }
             }
-        }
-        Log.error(`Could not find field ${fieldName} in input data.`, SCOPE)
-        return null
+            Log.error(`Could not find field ${fieldName} in input data.`, SCOPE)
+            return null
+        })
+    }
+
+    /**
+     * Return the appropriate lock view for the given `scope`.
+     * @param scope - Mutex scope to use.
+     * @returns Buffer view as an Int32Array.
+     */
+    protected _getLockView = (scope: MutexScope) => {
+        return scope === IOMutex.MUTEX_SCOPE.INPUT
+                         ? this._readLockView : this._writeLock.view
     }
 
     /**
@@ -329,7 +359,7 @@ export default class IOMutex implements AsymmetricMutex {
         // Select the mode-appropriate properties
         const metaFields = scope === IOMutex.MUTEX_SCOPE.INPUT
                                      ? this._inputMetaFields
-                                     : this._outputMetaFields
+                                     : this._outputMeta.fields
         for (const field of metaFields) {
             if (field.name === fieldName) {
                 return {...field}
@@ -344,25 +374,32 @@ export default class IOMutex implements AsymmetricMutex {
      * @param fieldName - Name of the field.
      * @returns Float32Array containing the values, or null on error.
      */
-    protected _getMetaFieldValue = (scope: MutexScope, fieldName: string) => {
+    protected _getMetaFieldValue = async (scope: MutexScope, fieldName: string) => {
         // Select the mode-appropriate properties
         const metaFields = scope === IOMutex.MUTEX_SCOPE.INPUT
                                      ? this._inputMetaFields
-                                     : this._outputMetaFields
+                                     : this._outputMeta.fields
         const metaView = scope === IOMutex.MUTEX_SCOPE.INPUT
                                    ? this._inputMetaView
-                                   : this._outputMetaView
+                                   : this._outputMeta.array.view
         if (!metaView) {
             Log.error(`Cound not get meta field value; the meta buffer is not initialized.`, SCOPE)
             return null
         }
-        for (const field of metaFields) {
-            if (field.name === fieldName) {
-                return metaView.subarray(field.position, field.position + field.length)
+        return this.executeWithLock(scope, IOMutex.OPERATION_MODE.READ, () => {
+            for (const field of metaFields) {
+                if (field.name === fieldName) {
+                    const value = metaView.subarray(field.position, field.position + field.length)
+                    if (field.constructor.name === 'Int32Array') {
+                        return value
+                    } else {
+                        return new field.constructor(value.buffer, value.byteOffset, value.byteLength/4)
+                    }
+                }
             }
-        }
-        Log.error(`Could not find field ${fieldName} in input data.`, SCOPE)
-        return null
+            Log.error(`Could not find field ${fieldName} in input data.`, SCOPE)
+            return null
+        })
     }
 
     /**
@@ -372,26 +409,43 @@ export default class IOMutex implements AsymmetricMutex {
      * @param values - The desired values (must match the length of the data field).
      * @returns True on success, false on error.
      */
-    protected _setOutputDataFieldValue = (index: number, fieldName: string, ...values: number[]) => {
-        if (index < 0 || index >= this._outputDataViews.length) {
-            Log.error(`Could not output data field value with an out of bound index ${index} (${this._outputDataViews.length} data buffers)!`, SCOPE)
-            return false
-        }
-        for (const field of this._outputDataFields) {
-            if (field.name === fieldName) {
-                if (values.length !== field.length) {
-                    Log.error(`Could not set output data field value; size of the value was incorrect (${values.length} !== ${field.length})!`, SCOPE)
-                    return false
-                }
-                this._outputDataViews[index].set(values, field.position)
-                if (this._outputDataBuffers[index]) {
-                    Atomics.notify(new Int32Array(this._outputDataBuffers[index]), field.position)
-                }
-                return true
+    protected _setOutputDataFieldValue = async (index: number, fieldName: string, ...values: number[]) => {
+        return this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {
+            if (!this._outputData || !this._buffer) {
+                Log.error(`Could not set output data field value; the buffer has not been initialized.`, SCOPE)
+                return false
             }
-        }
-        Log.error(`Could not find field ${fieldName} in output data.`, SCOPE)
-        return false
+            const dataArray = this._outputData.arrays[index]
+            if (index < 0 || !dataArray) {
+                Log.error(`Could not output data field value with an out of bound index ${index} (${this._outputData.arrays.length} data buffers).`, SCOPE)
+                return false
+            }
+            for (const field of this._outputData.fields) {
+                if (field.name === fieldName) {
+                    if (values.length !== field.length) {
+                        Log.error(`Could not set output data field value; size of the value was incorrect (${values.length} !== ${field.length}).`, SCOPE)
+                        return false
+                    }
+                    if (!dataArray.view) {
+                        Log.error(`Could not set output data field value; the array view has not been set.`, SCOPE)
+                        return false
+                    }
+                    if (field.constructor.name === 'Int32Array') {
+                        dataArray.view.set(values, field.position)
+                    } else {
+                        (new field.constructor(
+                            dataArray.view.buffer,
+                            dataArray.view.byteOffset,
+                            dataArray.view.byteLength/4
+                        )).set(values, field.position)
+                    }
+                    Atomics.notify(new Int32Array(this._buffer), dataArray.position + field.position)
+                    return true
+                }
+            }
+            Log.error(`Could not find field ${fieldName} in output data.`, SCOPE)
+            return false
+        })
     }
 
     /**
@@ -400,29 +454,42 @@ export default class IOMutex implements AsymmetricMutex {
      * @param values - The desired values (must match the length of the data field).
      * @returns True on success, false on error.
      */
-    protected _setOutputMetaFieldValue = (fieldName: string, ...values: number[]) => {
-        if (!this._outputMetaView) {
-            Log.error(`Cound not set output meta field value; the meta buffer has not bee initialized.`, SCOPE)
-            return false
-        }
-        for (const field of this._outputMetaFields) {
-            if (field.name === fieldName) {
-                if (values.length !== field.length) {
-                    Log.error(`Could not set output meta field value; size of the value was incorrect (${values.length} !== ${field.length})!`, SCOPE)
-                    return false
-                }
-                if (values[0] === this.EMPTY_FIELD) {
-                    Log.warn(`Output meta field value was set to the value reserved for empty field (${this.EMPTY_FIELD}), this may result in errors!`, SCOPE)
-                }
-                this._outputMetaView.set(values, field.position)
-                if (this._outputMetaBuffer) {
-                    Atomics.notify(new Int32Array(this._outputMetaBuffer), field.position)
-                }
-                return true
+    protected _setOutputMetaFieldValue = async (fieldName: string, ...values: number[]) => {
+        return this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {
+            if (!this._buffer) {
+                Log.error(`Could not set output meta field value; the buffer has not been initialized.`, SCOPE)
+                return false
             }
-        }
-        Log.error(`Could not find field ${fieldName} in output data.`, SCOPE)
-        return false
+            if (!this._outputMeta.array.view) {
+                Log.error(`Cound not set output meta field value; the meta view has not been set.`, SCOPE)
+                return false
+            }
+            for (const field of this._outputMeta.fields) {
+                if (field.name === fieldName) {
+                    if (values.length !== field.length) {
+                        Log.error(`Could not set output meta field value; size of the value was incorrect (${values.length} !== ${field.length}).`, SCOPE)
+                        return false
+                    }
+                    if (values[0] === this.EMPTY_FIELD) {
+                        Log.warn(`Output meta field value was set to the value reserved for empty field (${this.EMPTY_FIELD}), this may result in errors.`, SCOPE)
+                    }
+                    this._outputMeta.array.view.set(values, field.position)
+                    if (field.constructor.name === 'Int32Array') {
+                        this._outputMeta.array.view.set(values, field.position)
+                    } else {
+                        (new field.constructor(
+                            this._outputMeta.array.view.buffer,
+                            this._outputMeta.array.view.byteOffset,
+                            this._outputMeta.array.view.byteLength/4
+                        )).set(values, field.position)
+                    }
+                    Atomics.notify(new Int32Array(this._buffer), this._outputMeta.position + field.position)
+                    return true
+                }
+            }
+            Log.error(`Could not find field ${fieldName} in output data.`, SCOPE)
+            return false
+        })
     }
 
     /////////////////////////////////////////////////////////////////////////
@@ -461,13 +528,165 @@ export default class IOMutex implements AsymmetricMutex {
     }
 
     /**
+     * Get the value stored in `field` in all or some of the data arrays.
+     * @param field - Name of the field.
+     * @param indices - Array indices to include (defaults to all).
+     * @returns An array of values (null if the value for given index could not be retrieved) for each requested data array.
+     */
+    async getDataFieldValue (field: string, indices: number | number[] = []): Promise<(number|null)[]> {
+        if (!this._outputData || !this._buffer) {
+            Log.error(`Cannot get data field value before output data has been initialized.`, SCOPE)
+            return []
+        }
+        // Check arguments
+        let fieldIdx = IOMutex.UNASSIGNED_VALUE
+        for (let i=0; i< this._outputData.fields.length; i++) {
+            if (this._outputData.fields[i].name === field) {
+                fieldIdx = i
+                break
+            }
+        }
+        if (fieldIdx === IOMutex.UNASSIGNED_VALUE) {
+            Log.error(`Could not get data field value, field name '${field}' was not found.`, SCOPE)
+            return []
+        }
+        if (!Array.isArray(indices)) {
+            indices = [indices]
+        }
+        const invalidIndices = [] as number[]
+        for (let i=0; i<indices.length; i++) {
+            if (indices[i] < 0 || indices[i] >= this._outputData.arrays.length) {
+                Log.warn(`Data array index ${indices[i]} is out of bounds and was ignored.`, SCOPE)
+                invalidIndices.push(indices.splice(i, 1)[0])
+                i--
+            }
+        }
+        if (invalidIndices.length && !indices.length) {
+            Log.error(`List of indices given to 'getDataFieldValue' did not contain a single valid array index.`, SCOPE)
+            return []
+        }
+        const values = [] as (number|null)[]
+        for (let i=0; i<this._outputData.arrays.length; i++) {
+            if (indices.length && !indices.includes(i)) {
+                continue
+            }
+            const value = await this._getDataFieldValue(IOMutex.MUTEX_SCOPE.OUTPUT, i, field)
+            if (value === null) {
+                Log.warn(`Value for field '${field}' in array ${i} could not be retrieved.`, SCOPE)
+                values.push(null)
+            } else {
+                if (this._outputData.fields[fieldIdx].length === 1) {
+                    values.push(value[0])
+                } else {
+                    values.push(value)
+                }
+            }
+        }
+        return values
+    }
+
+    /**
+     * Get the value stored in the given meta `field`.
+     * @param field - Name of the meta field.
+     * @returns Value or null if an error occurred.
+     */
+    async getMetaFieldValue (field: string): Promise<number|null> {
+        if (!this._buffer) {
+            Log.error(`Cannot get meta field value before output meta has been initialized.`, SCOPE)
+            return null
+        }
+        // Check arguments
+        let fieldIdx = IOMutex.UNASSIGNED_VALUE
+        for (let i=0; i< this._outputMeta.fields.length; i++) {
+            if (this._outputMeta.fields[i].name === field) {
+                fieldIdx = i
+                break
+            }
+        }
+        if (fieldIdx === IOMutex.UNASSIGNED_VALUE) {
+            Log.error(`Could not set meta field value, field name '${field}' was not found.`, SCOPE)
+            return null
+        }
+        const value = await this._getMetaFieldValue(IOMutex.MUTEX_SCOPE.OUTPUT, field)
+        return value !== null ? value[0] : value
+    }
+
+    /**
+     * Initialize the mutex using the given `buffer`.
+     * @param buffer - Buffer for this mutex.
+     * @param startPosition - Optional 32-bit start position of this mutex within the buffer (defaults to zero).
+     * @return Success (true/false)
+     */
+    initialize (buffer: SharedArrayBuffer, startPosition: number = 0): boolean {
+        if (this._buffer) {
+            Log.error(`Cannot re-initialize an already initialized mutex.`, SCOPE)
+            return false
+        }
+        if (startPosition >= 0) {
+            this._BUFFER_START = startPosition
+        }
+        // Check that the buffer can hold all current field elements
+        let endIndex = this._BUFFER_START + Math.max(
+            ...this._outputMeta.fields.map(f => f.position + f.length)
+        )
+        if (this._outputData) {
+            const fieldsLen = this._outputData.fields.reduce((total, f) => total + f.length, 0)
+            endIndex += this._outputData.arrays.length*fieldsLen
+        }
+        if (buffer.byteLength < endIndex) {
+            Log.error(`The given buffer is too small to contain current meta and data arrays (${buffer.byteLength} vs ${endIndex}).`, SCOPE)
+            return false
+        }
+        this._buffer = buffer
+        this._writeLock.buffer = buffer
+        this._writeLock.view = new Int32Array(buffer, (this.BUFFER_START + IOMutex.LOCK_POS)*4, 1)
+        this._writeLock.view.set([0])
+        // Set meta view
+        if (this._outputMeta.fields.length) {
+            this._outputMeta.array.view = new Int32Array(
+                buffer,
+                (this.BUFFER_START + IOMutex.LOCK_POS + IOMutex.LOCK_LENGTH)*4,
+                this._outputMeta.length
+            )
+        }
+        if (this._outputMeta.fields.length) {
+            // Set meta field values as empty
+            for (const field of this._outputMeta.fields) {
+                const fieldPos = this.BUFFER_START + IOMutex.LOCK_LENGTH + field.position
+                const view = new field.constructor(buffer, fieldPos*4, field.length)
+                view[0] = this._EMPTY_FIELD
+            }
+        }
+        return true
+    }
+
+    /**
+     * Check if the given typed array constructor is allowed.
+     * @param constructor - Constructor of the typed array.
+     * @returns true/false
+     */
+    isAllowedTypeConstructor (constructor: TypedNumberArrayConstructor) {
+        if (constructor.BYTES_PER_ELEMENT !== 4) {
+            // Since the lock buffer must use a 32-bit integer, also the other views' element
+            // sizes must be 32-bit numbers (arrays cannot have fractional indices).
+            return false
+        }
+        return true
+    }
+
+    /**
      * Check if the shared array is available for the given mode of operation.
      * @param scope - Mutex scope to use.
      * @param mode - Mode of operation.
      * @returns True/false.
      */
     isAvailable (scope: MutexScope, mode: MutexMode) {
-        const lockVal = Atomics.load(this._getLockView(scope), 0)
+        const lockView = this._getLockView(scope)
+        if (!lockView) {
+            Log.error(`'isAvailable' method called before mutex was initialized.`, SCOPE)
+            return false
+        }
+        const lockVal = Atomics.load(lockView, IOMutex.LOCK_POS)
         return (
             lockVal === IOMutex.UNLOCKED_VALUE ||
             (mode === IOMutex.OPERATION_MODE.READ && lockVal !== IOMutex.WRITE_LOCK_VALUE)
@@ -488,7 +707,12 @@ export default class IOMutex implements AsymmetricMutex {
         return new Promise<boolean>(async (resolve) => {
             const input = (mode === IOMutex.OPERATION_MODE.READ)
             const lockView = this._getLockView(scope)
+            if (!lockView) {
+                Log.error(`Cannot lock the array before mutex is initialized.`, SCOPE)
+                return false
+            }
             let retries = 0
+            const startTime = Date.now()
             while (retries < maxTries) {
                 const curValue = Atomics.load(lockView, 0)
                 // Multiple mutexes can access the same read-locked buffer as input, so check for that first
@@ -515,7 +739,7 @@ export default class IOMutex implements AsymmetricMutex {
                     // Else, keep waiting for the lock to release (wait for 90 ms, sleep for 10 ms).
                     // TODO: Should there be a wait line for same operation lock attempts
                     //       (to avoid race conditions between same operation requests)?
-                    await Promise.all([
+                    const result = await Promise.all([
                         Atomics.wait(
                             lockView,
                             0,
@@ -524,10 +748,12 @@ export default class IOMutex implements AsymmetricMutex {
                         ),
                         sleep(10)
                     ])
+                    // TODO: Check result for ok?
                 }
                 retries++
             }
             if (retries === maxTries) {
+                Log.error(`Maximum retries of locking operation reached in ${Date.now() - startTime} ms, aborting.`, SCOPE)
                 resolve(false)
             }
         })
@@ -540,9 +766,14 @@ export default class IOMutex implements AsymmetricMutex {
      * @returns Promise that resolves when the mode of operation is available.
      */
     async onceAvailable (scope: MutexScope, mode: MutexMode) {
-        return new Promise<void>((resolve) => {
+        return new Promise<boolean>((resolve) => {
             const input = (mode === IOMutex.OPERATION_MODE.READ)
             const lockView = this._getLockView(scope)
+            if (!lockView) {
+                Log.error(`'onceAvailable' method called before mutex was initialized.`, SCOPE)
+                resolve(false)
+                return
+            }
             while (true) {
                 const prevValue = Atomics.load(lockView, 0)
                 // Check if the buffer is unlocked
@@ -550,7 +781,7 @@ export default class IOMutex implements AsymmetricMutex {
                     prevValue === IOMutex.UNLOCKED_VALUE ||
                     input && prevValue > 0
                 ) {
-                    resolve()
+                    resolve(true)
                     return
                 }
                 // Else, keep waiting for the lock to release
@@ -575,15 +806,332 @@ export default class IOMutex implements AsymmetricMutex {
         this._inputDataFields.splice(0)
         this._inputDataViews.splice(0)
         this._inputMetaView = null
-        this._outputDataViews.splice(0)
-        this._outputDataFields.splice(0)
-        this._outputDataBuffers.splice(0)
-        this._outputMetaView = null
-        this._outputMetaFields.splice(0)
-        this._outputMetaBuffer = null
-        this._readLockView = new Int32Array()
-        this._writeLockView = new Int32Array()
-        this._writeLockBuffer = new SharedArrayBuffer(0)
+        if (this._outputData) {
+            for (const arr of this._outputData.arrays) {
+                arr.view = null
+            }
+            this._outputData.arrays.splice(0)
+            this._outputData.fields.splice(0)
+        }
+        if (this._outputMeta) {
+            this._outputMeta.array.view = null
+            this._outputMeta.fields.splice(0)
+            this._outputMeta.array.length = IOMutex.UNASSIGNED_VALUE
+            this._outputMeta.array.position = IOMutex.UNASSIGNED_VALUE
+        }
+        this._readLockView = null
+        this._writeLock.view = null
+        this._writeLock.buffer = null
+    }
+
+    /**
+     * Set a new position for the buffer start.
+     * @param position - Position as a 32-bit array index.
+     */
+    setBufferStartPosition (position: number) {
+        // Get difference to old buffer start
+        const posDif = position - this._BUFFER_START
+        this._BUFFER_START += posDif
+        // Set meta array position
+        if (this._outputMeta.position !== IOMutex.UNASSIGNED_VALUE) {
+            this._outputMeta.position += posDif
+        }
+        if (this._outputMeta.array.position !== IOMutex.UNASSIGNED_VALUE) {
+            this._outputMeta.array.position += posDif
+        }
+        // Set data array positions
+        if (this._outputData) {
+            if (this._outputData.position !== IOMutex.UNASSIGNED_VALUE) {
+                this._outputData.position += posDif
+            }
+            for (const array of this._outputData.arrays) {
+                if (array.position !== IOMutex.UNASSIGNED_VALUE) {
+                    array.position += posDif
+                    if (array.view && this._buffer) {
+                        const viewPos = this.BUFFER_START + array.position
+                        array.view = array.view.constructor(
+                            this._buffer,
+                            viewPos*4,
+                            array.length,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Set new data to the data arrays in this mutex. Both the new data and the
+     * existing data array views must have the same bytes per element.
+     * @param arrayIdx - Starting index of the list of data arrays.
+     * @param dataArrays - Data array or list of arrays to use as new data.
+     * @param dataIdx - Optional starting index within the data array (default 0).
+     * @returns Success (true/false)
+     */
+    async setData (arrayIdx: number, dataArrays: TypedNumberArray|TypedNumberArray[], dataIdx = 0): Promise<boolean> {
+        // Set new data arrays
+        return this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {
+            if (!this._outputData) {
+                Log.error(`Cannot set data, the arrays have not been intialized yet.`, SCOPE)
+                return false
+            }
+            if (arrayIdx < 0 || arrayIdx >= this._outputData.arrays.length) {
+                Log.error(`Cannot set data, the arrays have not been intialized yet.`, SCOPE)
+                return false
+            }
+            if (Array.isArray(dataArrays) && dataArrays.length + dataIdx > this._outputData.arrays.length) {
+                Log.error(`The number of data arrays (${dataArrays.length}) starting from index ${dataIdx} exceeds existing number of arrays (${this._outputData.arrays.length}) and will be truncated.`, SCOPE)
+                dataArrays.splice(this._outputData.arrays.length - arrayIdx)
+            }
+            // Convert single data array to use with for()
+            if (!Array.isArray(dataArrays)) {
+                dataArrays = [dataArrays]
+            }
+            for (const data of dataArrays) {
+                if (!data.length) {
+                    continue // Don't process empty entries
+                }
+                const view = this._outputData.arrays[arrayIdx].view
+                if (!view) {
+                    Log.error(`Cannot set data to array ${arrayIdx}, the view has not been set.`, SCOPE)
+                    continue
+                }
+                if (view.BYTES_PER_ELEMENT !== data.BYTES_PER_ELEMENT) {
+                    Log.error(`Cannot set data to array ${arrayIdx}, bytes per element of the data and the view are incompatible (${view.BYTES_PER_ELEMENT} vs ${data.BYTES_PER_ELEMENT}).`, SCOPE)
+                    continue
+                }
+                if (!dataIdx && view.length - this._outputDataPosition > data.length) {
+                    Log.warn(`New data is shorter than the data array length; end of the array is not updated.`, SCOPE)
+                }
+                if (view.length - this._outputDataPosition < data.length + dataIdx) {
+                    Log.warn(`New data is longer than the data array length; end of the enw data is truncated.`, SCOPE)
+                    view.set(data.subarray(0, view.length), this._outputDataPosition + dataIdx)
+                } else {
+                    view.set(data, this._outputDataPosition + dataIdx)
+                }
+                arrayIdx++
+            }
+            return true
+        })
+    }
+
+    /**
+     * Set data arrays to current buffer.
+     * @param dataArrays - Arrays to set as new data arrays (empty array will remove all current arrays).
+     * @returns Success (true/false)
+     */
+    setDataArrays (dataArrays: { constructor: TypedNumberArrayConstructor, length: number }[] = []): boolean {
+        if (!this._buffer) {
+            Log.error(`Cannot set data arrays before main buffer has been initialized.`, SCOPE)
+            return false
+        }
+        if (!this._outputData) {
+            Log.error(`Cannot set data arrays before output data properties have been initialized.`, SCOPE)
+            return false
+        }
+        // Reset old arrays
+        if (this._outputData.arrays) {
+            for (const array of this._outputData.arrays.splice(0)) {
+                array.view = null
+            }
+        }
+        // Keep track of array starting position
+        let arrayPos = IOMutex.LOCK_LENGTH
+        // Add meta fields length
+        if (this._outputMeta.fields.length) {
+            for (const field of this._outputMeta.fields) {
+                arrayPos += field.length
+            }
+        }
+        for (const array of dataArrays) {
+            this._outputData.arrays.push({
+                length: array.length,
+                position: arrayPos,
+                view: new array.constructor(
+                    this._buffer,
+                    (this.BUFFER_START + arrayPos)*4,
+                    this._outputDataPosition + array.length
+                )
+            })
+            // Add the length of data fields and the main data array
+            arrayPos += this._outputDataPosition + array.length
+        }
+        return true
+    }
+
+    /**
+     * Set data field descriptors or reset their positions if meta fields have changed.
+     * @param fields - Optional new fields (if empty, will recalculate positions of existing fields).
+     * @returns Success (true/false)
+     */
+    setDataFields (fields?: MutexMetaField[]): boolean {
+        if (!this._outputMeta) {
+            Log.error(`Cannot set data fields before meta fields are set.`, SCOPE)
+            return false
+        }
+        if (!fields) {
+            if (!this._outputData?.fields) {
+                Log.error(`Cannot reset data fields that have not been initialized yet.`, SCOPE)
+                return false
+            }
+            fields = this._outputData.fields
+        } else {
+            let fieldsLen = 0
+            for (const f of fields) {
+                if (!this.isAllowedTypeConstructor(f.constructor)) {
+                    Log.error(`Data view constructor must use either an 8-bit, 16-bit or 32-bit element size.`, SCOPE)
+                    return false
+                }
+                fieldsLen += f.length
+            }
+            this._outputDataPosition = fieldsLen
+            if (!this._outputData) {
+                // Initialize data fields property
+                this._outputData = {
+                    arrays: [],
+                    buffer: null,
+                    fields: fields,
+                    length: fieldsLen,
+                    position: IOMutex.LOCK_LENGTH + this._outputMeta.length,
+                }
+            } else {
+                // Set field values
+                this._outputData.fields = fields
+            }
+        }
+        // Set field positions
+        let fieldPos = 0
+        for (const field of this._outputData.fields) {
+            if (field.position === IOMutex.UNASSIGNED_VALUE) {
+                field.position = fieldPos
+            }
+            fieldPos += field.length
+        }
+        // Set possible data array positions
+        let arrayPos = 0
+        for (const array of this._outputData.arrays) {
+            if (array.view) {
+                array.position = arrayPos
+                const viewPos = this.BUFFER_START + IOMutex.LOCK_LENGTH + this._outputMeta.length + array.position
+                array.view = array.view.constructor(this._buffer, viewPos*4, array.length)
+                arrayPos += fieldPos + array.length
+            }
+        }
+        this._outputData.length = arrayPos
+        return true
+    }
+
+    /**
+     * Set the `value` to the given `field` in all or some of the data arrays.
+     * @param field - Name of the field.
+     * @param value - The value to set.
+     * @param indices - Indices of the data arrays to set the value to (defaults to all).
+     * @returns Success (true/false)
+     */
+    async setDataFieldValue (field: string, value: number, indices: number[] = []): Promise<boolean> {
+        if (!this._outputData || !this._buffer) {
+            Log.error(`Cannot set data field value before output data has been initialized.`, SCOPE)
+            return false
+        }
+        // Check arguments
+        let fieldIdx = IOMutex.UNASSIGNED_VALUE
+        for (let i=0; i< this._outputData.fields.length; i++) {
+            if (this._outputData.fields[i].name === field) {
+                fieldIdx = i
+                break
+            }
+        }
+        if (fieldIdx === IOMutex.UNASSIGNED_VALUE) {
+            Log.error(`Could not set data field value, field name '${field}' was not found.`, SCOPE)
+            return false
+        }
+        const invalidIndices = [] as number[]
+        for (let i=0; i<indices.length; i++) {
+            if (indices[i] < 0 || indices[i] >= this._outputData.arrays.length) {
+                Log.warn(`Data array index ${indices[i]} is out of bounds and was ignored.`, SCOPE)
+                invalidIndices.push(indices.splice(i, 1)[0])
+                i--
+            }
+        }
+        if (invalidIndices.length && !indices.length) {
+            Log.error(`List of indices given to 'setDataFieldValue' did not contain a single valid array index, no field values were set.`, SCOPE)
+            return false
+        }
+        let allSuccess = true
+        for (let i=0; i<this._outputData.arrays.length; i++) {
+            if (indices.length && !indices.includes(i)) {
+                continue
+            }
+            const success = this._setOutputDataFieldValue(i, field, value)
+            if (!success && allSuccess) {
+                allSuccess = false
+            }
+        }
+        return allSuccess
+    }
+
+    /**
+     * Set the given fields as meta information fields.
+     * @param fields - Meta fields to use.
+     * @returns Success (true/false)
+     */
+    setMetaFields (fields: MutexMetaField[]): boolean {
+        let metaLen = 0
+        for (const f of fields) {
+            if (!this.isAllowedTypeConstructor(f.constructor)) {
+                Log.error(`Each meta field must use either an 8-bit, 16-bit or 32-bit element size.`, SCOPE)
+                return false
+            }
+            metaLen += f.length
+        }
+        if (!this._outputMeta) {
+            this._outputMeta = {
+                array: {
+                    length: metaLen,
+                    position: IOMutex.LOCK_LENGTH,
+                    view: null,
+                },
+                buffer: null,
+                fields: fields,
+                length: metaLen,
+                position: IOMutex.LOCK_LENGTH,
+            }
+        } else {
+            this._outputMeta.fields = fields
+            this._outputMeta.length = metaLen
+        }
+        if (this._outputData?.fields) {
+            // Correct data field positions to reflect the new meta fields
+            this.setDataFields()
+        }
+        return true
+    }
+
+    /**
+     * Set a new `value` to a meta info `field`.
+     * @param field - Name of the field.
+     * @param value - The new value to set.
+     * @returns Success (true/false)
+     */
+    async setMetaFieldValue (field: string, value: number): Promise<boolean> {
+        if (!this._buffer) {
+            Log.error(`Cannot set meta field value before output meta has been initialized.`, SCOPE)
+            return false
+        }
+        // Check arguments
+        let fieldIdx = IOMutex.UNASSIGNED_VALUE
+        for (let i=0; i< this._outputMeta.fields.length; i++) {
+            if (this._outputMeta.fields[i].name === field) {
+                fieldIdx = i
+                break
+            }
+        }
+        if (fieldIdx === IOMutex.UNASSIGNED_VALUE) {
+            Log.error(`Could not set meta field value, field name '${field}' was not found.`, SCOPE)
+            return false
+        }
+        const success = await this._setOutputMetaFieldValue(field, value)
+        return success
     }
 
     /**
@@ -595,6 +1143,11 @@ export default class IOMutex implements AsymmetricMutex {
     unlock (scope: MutexScope, mode: MutexMode) {
         const input = (mode === IOMutex.OPERATION_MODE.READ)
         const lockView = this._getLockView(scope)
+        if (!lockView) {
+            Log.error(`'unlock' method called before mutex was initialized.`, SCOPE)
+            return false
+        }
+        const curValue = Atomics.load(lockView, 0)
         // Check if this is an input mutex and remove this mutex from the read counter
         this._lockScope[scope][mode] = false
         if (input) {
@@ -602,7 +1155,7 @@ export default class IOMutex implements AsymmetricMutex {
             if (prevReaders <= 0) {
                 // This should not happen unless there is a bug somewhere
                 Atomics.store(lockView, 0, 0)
-                Log.error(`Unlock operation substracted read lock count below zero!`, SCOPE)
+                Log.error(`Unlock operation substracted read lock count below zero.`, SCOPE)
             } else if (prevReaders !== IOMutex.READ_LOCK_VALUE) {
                 // There are still some inputs left, so stop here
                 Atomics.notify(lockView, 0)
@@ -614,7 +1167,7 @@ export default class IOMutex implements AsymmetricMutex {
                 !== IOMutex.WRITE_LOCK_VALUE
         ) {
             // This should not happen unless there is a bug somewhere
-            Log.error(`Unlock operation called on an already unlocked buffer!`, SCOPE)
+            Log.error(`Unlock operation called on an already unlocked buffer.`, SCOPE)
         }
         Atomics.notify(lockView, 0)
         return true
@@ -623,14 +1176,14 @@ export default class IOMutex implements AsymmetricMutex {
     /**
      * Wait for a meta or data field to update and return the new value.
      * @param fieldType - Type of the field ('data' or 'meta').
-     * @param fieldIndex - Index of the field in the data/meta field buffer.
+     * @param fieldIndex - Index of the the data/meta field.
      * @param dataIndex - Index of the data buffer (only if fieldType is 'data', defaults to last data buffer).
      * @returns A promise that will resolve with the new number at the given field or reject on error.
      */
     waitForFieldUpdate (fieldType: 'data' | 'meta', fieldIndex: number, dataIndex?: number) {
         return new Promise<number>((resolve, reject) => {
             if (fieldIndex < 0) {
-                reject(`Given field index is less than zero.`)
+                reject(`Cannot wait for field update, given field index is less than zero.`)
                 return
             }
             const waitForNewValue = (fieldArray: Int32Array, fieldIndex: number) => {
@@ -640,29 +1193,40 @@ export default class IOMutex implements AsymmetricMutex {
                 return Atomics.load(fieldArray, fieldIndex)
             }
             if (fieldType === 'data') {
-                if (dataIndex === undefined) {
-                    // Data fields are updated sequentially, so monitor the last field in the array
-                    dataIndex = this._outputDataBuffers.length - 1
-                }
-                if (dataIndex < 0 || dataIndex >= this._outputDataBuffers.length) {
-                    reject(`Given data buffer index is outside of data buffer array range.`)
-                }
-                if (fieldIndex >= this._outputDataFields.length) {
-                    reject(`Given field index exceeds the number of data fields.`)
+                if (!this._outputData || !this._buffer) {
+                    reject(`Cannot wait for field update, data buffer has not been initialized.`)
                     return
                 }
-                const value = waitForNewValue(new Int32Array(this._outputDataBuffers[dataIndex]), fieldIndex)
+                if (dataIndex === undefined) {
+                    // Data fields are updated sequentially, so monitor the last field in the array
+                    dataIndex = this._outputData.arrays.length - 1
+                }
+                if (dataIndex < 0 || dataIndex >= this._outputData.arrays.length) {
+                    reject(`Cannot wait for field update, given data array index is out of range.`)
+                }
+                if (fieldIndex >= this._outputData.fields.length) {
+                    reject(`Cannot wait for field update, given field index exceeds the number of data fields.`)
+                    return
+                }
+                const dataField = this._outputData.fields[fieldIndex]
+                const dataArrayPos = this._outputData.arrays[dataIndex].position
+                const value = waitForNewValue(new Int32Array(this._buffer), this.BUFFER_START + dataArrayPos + dataField.position)
                 if (value === null) {
                     reject (`Field update request timed out.`)
                 } else {
                     resolve(value)
                 }
             } else {
-                if (!this._outputMetaView || fieldIndex >= this._outputMetaFields.length) {
-                    reject(`Meta view is not initialized or given field index exceeds the number of meta fields.`)
+                if (!this._buffer) {
+                    reject(`Cannot wait for field update, meta buffer has not been initialized.`)
                     return
                 }
-                const value = waitForNewValue(new Int32Array(this._outputMetaView), fieldIndex)
+                if (!this._outputMeta.array.view || fieldIndex >= this._outputMeta.fields.length) {
+                    reject(`Cannot wait for field update, meta view is not initialized or given field index exceeds the number of meta fields.`)
+                    return
+                }
+                const metaField = this._outputMeta.fields[fieldIndex]
+                const value = waitForNewValue(new Int32Array(this._buffer), this.BUFFER_START + metaField.position)
                 if (value === null) {
                     reject (`Field update request timed out.`)
                 } else {

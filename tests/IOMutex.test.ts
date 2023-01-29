@@ -9,63 +9,69 @@ import { describe, expect, test } from '@jest/globals'
 import IOMutex from '../src'
 import { MutexExportProperties, MutexMetaField, TypedNumberArray, TypedNumberArrayConstructor } from '../src/AsymmetricMutex'
 
-const DATA_POS = 2
-const RESULTS_POS = 2
+let expectError = false
+// Catch console errors
+beforeAll(() => {
+    jest.spyOn(console, 'error').mockImplementation((message: any) => {
+        // Do not show the message if expected
+        if (!expectError) {
+            console.log('Unexpected error:', message)
+        }
+    })
+})
+afterEach(() => {
+    (console.error as any).mockClear()
+})
+afterAll(() => {
+    (console.error as any).mockRestore()
+})
+
+// 1 MiB buffer
+const SAB = new SharedArrayBuffer(1*1024)
+let BUFFER_POS = 0
+
 // Create a test class that extends IOMutex
 class TestMutex extends IOMutex {
-    constructor (viewConstructor: TypedNumberArrayConstructor, metaFields: MutexMetaField[], dataFields: MutexMetaField[], dataArrays: TypedNumberArray[], coupledMutexProps?: MutexExportProperties) {
+    constructor (viewConstructor: TypedNumberArrayConstructor, metaFields: MutexMetaField[], dataFields: MutexMetaField[], dataArrays: TypedNumberArray[], dataLength: number, coupledMutexProps?: MutexExportProperties) {
         super(
             metaFields,
-            viewConstructor,
-            viewConstructor,
-            coupledMutexProps ?
-            {
-                metaViewConstructor: viewConstructor,
-                dataViewConstructor: viewConstructor,
-                coupledMutexProps: coupledMutexProps
-            } : undefined
+            undefined,
+            coupledMutexProps
         )
-        // Initialize buffers for each data field
-        let dataLen = 0
-        for (const field of dataFields) {
-            this._outputDataFields.push({
-                name: field.name,
-                length: field.length,
-                position: field.position,
-            })
-            dataLen += field.length
+        // Initialize buffer
+        this.initialize(SAB, BUFFER_POS)
+        BUFFER_POS += IOMutex.LOCK_LENGTH
+        let metaLen = 0
+        for (const f of metaFields) {
+            if (f.data !== undefined) {
+                this.setMetaFieldValue(f.name, f.data[0])
+            }
+            metaLen += f.length
         }
+        let dataLen = 0
+        this.setDataFields(dataFields)
+        this.setDataArrays(dataArrays.map(a => { return { constructor: viewConstructor, length: dataLength } }))
         for (let i=0; i<dataArrays.length; i++) {
-            const sab = new SharedArrayBuffer(dataLen*viewConstructor.BYTES_PER_ELEMENT)
-            this._outputDataBuffers.push(sab)
-            const dataView = new viewConstructor(sab)
             for (let j=0; j<dataFields.length; j++) {
                 const field = dataFields[j]
                 if (field.data) {
-                    dataView.set(field.data, field.position)
-                } else {
-                    dataView.set(dataArrays[i], field.position)
+                    this._setOutputDataFieldValue(i, field.name, field.data[0])
                 }
+                dataLen += field.length
             }
-            this._outputDataViews.push(dataView)
+            this.setData(i, dataArrays[i])
+            dataLen += dataArrays[i].length
         }
+        BUFFER_POS += metaLen + dataLen
     }
     get inputDataViews () {
         return this._inputDataViews
     }
-    get outputDataViews () {
-        return this._outputDataViews
+    get inputMetaView () {
+        return this._inputMetaView
     }
     async writeData (data: TypedNumberArray[]) {
-        if (data.length !== this._outputDataBuffers.length) {
-            return false
-        }
-        await this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {
-            for (let i=0; i<data.length; i++) {
-                this.outputDataViews[i].set(data[i], DATA_POS)
-            }
-        })
-        return true
+        return this.setData(0, data)
     }
 }
 
@@ -73,235 +79,136 @@ describe('IOMutex tests', () => {
     test('Class is defined', () => {
         expect(IOMutex).toBeDefined()
     })
-    test('Can construct with all array types', async () => {
-        const int8Mutex = new TestMutex(
-            Int8Array,
-            [
-                {
-                    length: 1,
-                    name: 'test',
-                    position: 0
-                }
-            ],
-            [
-                {
-                    length: 10,
-                    name: 'data-array',
-                    position: 0
-                }
-            ],
-            [
-                new Int8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-            ]
-        )
-        await int8Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(int8Mutex.outputDataViews).toStrictEqual([new Int8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        })
-        const int16Mutex = new TestMutex(
-            Int16Array,
-            [
-                {
-                    length: 1,
-                    name: 'test',
-                    position: 0
-                }
-            ],
-            [
-                {
-                    length: 10,
-                    name: 'data-array',
-                    position: 0
-                }
-            ],
-            [
-                new Int16Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-            ]
-        )
-        await int16Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(int16Mutex.outputDataViews).toStrictEqual([new Int16Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        })
+    test('Can construct with all 32-bit array types', async () => {
         const int32Mutex = new TestMutex(
             Int32Array,
             [
                 {
+                    constructor: Int32Array,
                     length: 1,
                     name: 'test',
                     position: 0
                 }
             ],
             [
-                {
-                    length: 10,
-                    name: 'data-array',
-                    position: 0
-                }
             ],
             [
                 new Int32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-            ]
+            ],
+            10
         )
-        await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(int32Mutex.outputDataViews).toStrictEqual([new Int32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        })
-        const uint8Mutex = new TestMutex(
-            Uint8Array,
-            [
-                {
-                    length: 1,
-                    name: 'test',
-                    position: 0
-                }
-            ],
-            [
-                {
-                    length: 10,
-                    name: 'data-array',
-                    position: 0
-                }
-            ],
-            [
-                new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-            ]
-        )
-        await uint8Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(uint8Mutex.outputDataViews).toStrictEqual([new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        })
-        const uint16Mutex = new TestMutex(
-            Uint16Array,
-            [
-                {
-                    length: 1,
-                    name: 'test',
-                    position: 0
-                }
-            ],
-            [
-                {
-                    length: 10,
-                    name: 'data-array',
-                    position: 0
-                }
-            ],
-            [
-                new Uint16Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-            ]
-        )
-        await uint16Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(uint16Mutex.outputDataViews).toStrictEqual([new Uint16Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        })
         const uint32Mutex = new TestMutex(
             Uint32Array,
             [
                 {
+                    constructor: Uint32Array,
                     length: 1,
                     name: 'test',
                     position: 0
                 }
             ],
             [
-                {
-                    length: 10,
-                    name: 'data-array',
-                    position: 0
-                }
             ],
             [
                 new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-            ]
+            ],
+            10
         )
-        await uint32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(uint32Mutex.outputDataViews).toStrictEqual([new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        })
         const float32Mutex = new TestMutex(
             Float32Array,
             [
                 {
+                    constructor: Float32Array,
                     length: 1,
                     name: 'test',
                     position: 0
                 }
             ],
             [
-                {
-                    length: 10,
-                    name: 'data-array',
-                    position: 0
-                }
             ],
             [
                 new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
-            ]
+            ],
+            10
         )
-        await float32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(float32Mutex.outputDataViews).toStrictEqual([new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
+        const dataUint = await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return uint32Mutex.outputDataViews
         })
+        expect(dataUint).toStrictEqual([new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
+        const dataInt = await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return int32Mutex.outputDataViews
+        })
+        expect(dataInt).toStrictEqual([new Int32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
+        const dataFloat = await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return float32Mutex.outputDataViews
+        })
+        expect(dataFloat).toStrictEqual([new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
     })
     const MTX_OUT = new TestMutex(
         Int32Array,
         [
             {
+                constructor: Int32Array,
                 length: 1,
                 name: 'current-array',
-                position: 0
+                position: 0,
+                data: [1]
             }
         ],
         [
             {
+                constructor: Int32Array,
                 length: 1,
                 name: 'total-fields',
                 position: 0,
                 data: [10]
             },
             {
+                constructor: Int32Array,
                 length: 1,
                 name: 'fields-loaded',
                 position: 1,
                 data: [0]
             },
-            {
-                length: 10,
-                name: 'data',
-                position: 2,
-            }
         ],
         [
             new Int32Array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
             new Int32Array([2, 2, 2, 2, 2, 2, 2, 2, 2, 2]),
             new Int32Array([3, 3, 3, 3, 3, 3, 3, 3, 3, 3]),
-        ]
+        ],
+        10
     )
     const MTX_IN = new TestMutex(
         Int32Array,
         [
             {
+                constructor: Int32Array,
                 length: 1,
                 name: 'current-array',
                 position: 0,
-                data: [0]
+                data: [2]
             }
         ],
         [
             {
+                constructor: Int32Array,
                 length: 1,
                 name: 'total-computations',
                 position: 0,
                 data: [10]
             },
             {
+                constructor: Int32Array,
                 length: 1,
                 name: 'computations-done',
                 position: 1,
                 data: [0]
             },
-            {
-                length: 10,
-                name: 'results',
-                position: 2
-            }
         ],
         [
             new Int32Array(10)
         ],
+        10,
         MTX_OUT.propertiesForCoupling
     )
     test('Can lock and unlock array', async () => {
@@ -310,14 +217,41 @@ describe('IOMutex tests', () => {
         const unlock = MTX_OUT.unlock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
         expect(unlock).toStrictEqual(true)
     })
+    test('Can read input and output meta fields', async () => {
+        const inMeta = MTX_IN.inputMetaView
+        expect((inMeta || [])[0]).toStrictEqual(1)
+        const outMeta = await MTX_IN.getMetaFieldValue('current-array')
+        expect(outMeta).toStrictEqual(2)
+    })
+    test('Can set meta field values', async () => {
+        const setMeta = await MTX_OUT.setMetaFieldValue('current-array', 3)
+        expect(setMeta).toStrictEqual(true)
+        const metaVal = await MTX_OUT.getMetaFieldValue('current-array')
+        expect(metaVal).toStrictEqual(3)
+    })
     test('Can read output buffers', async () => {
-        await MTX_OUT.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(MTX_OUT.outputDataViews).toStrictEqual([
-                new Int32Array([10, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
-                new Int32Array([10, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]),
-                new Int32Array([10, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]),
-            ])
+        const dataOut = await MTX_OUT.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return MTX_OUT.outputDataViews
         })
+        expect(dataOut).toStrictEqual([
+            new Int32Array([10, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
+            new Int32Array([10, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]),
+            new Int32Array([10, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]),
+        ])
+    })
+    test('Can set output data field values', async () => {
+        MTX_OUT.setDataFieldValue('fields-loaded', 1, [0])
+        MTX_OUT.setDataFieldValue('fields-loaded', 2, [1])
+        MTX_OUT.setDataFieldValue('fields-loaded', 3, [2])
+        const dataOut = await MTX_OUT.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return MTX_OUT.outputDataViews
+        })
+        expect(dataOut).toStrictEqual([
+            new Int32Array([10, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
+            new Int32Array([10, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]),
+            new Int32Array([10, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]),
+        ])
+        MTX_OUT.setDataFieldValue('fields-loaded', 0)
     })
     test('Can write to output buffers', async () => {
         const write = await MTX_OUT.writeData([
@@ -328,51 +262,54 @@ describe('IOMutex tests', () => {
         expect(write).toStrictEqual(true)
     })
     test('Can read input buffers', async () => {
-        await MTX_IN.executeWithLock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ, () => {
-            expect(MTX_IN.inputDataViews).toStrictEqual([
-                new Int32Array([10, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-                new Int32Array([10, 0, 0, 2, 4, 6, 8, 10, 18, 14, 16, 18]),
-                new Int32Array([10, 0, 0, 2, 4, 8, 16, 32, 64, 128, 256, 512]),
-            ])
+        const dataIn = await MTX_IN.executeWithLock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return MTX_IN.inputDataViews
         })
+        expect(dataIn).toStrictEqual([
+            new Int32Array([10, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            new Int32Array([10, 0, 0, 2, 4, 6, 8, 10, 18, 14, 16, 18]),
+            new Int32Array([10, 0, 0, 2, 4, 8, 16, 32, 64, 128, 256, 512]),
+        ])
     })
     test('Cannot read input buffers locked by the output mutex', async () => {
         const writeLock = await MTX_OUT.lock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
         expect(writeLock).toStrictEqual(true)
-        try {
-            const readLock = await MTX_IN.lock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ, 1)
-            expect(readLock).toStrictEqual(false)
-        } catch (e) {
-            console.error(e)
-        }
+        // Expect a maximum retries reached error here
+        expectError = true
+        const readLock = await MTX_IN.lock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ, 1)
+        expect(readLock).toStrictEqual(false)
+        expect(console.error).toHaveBeenCalled()
+        expectError = false
         const writeUnlock = MTX_OUT.unlock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
         expect(writeUnlock).toStrictEqual(true)
     })
     test('Can execute other methods while waiting for lock', async () => {
         const writeLock = await MTX_OUT.lock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
         expect(writeLock).toStrictEqual(true)
-        let gotLock = null as null | boolean
-        try {
-            let resolveAllDone: null | (() => void) = null
-            const allDone = new Promise<void>(resolve => {
-                resolveAllDone = resolve
-            })
-            MTX_IN.lock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ).then((result) => {
-                gotLock = result
-                expect(gotLock).toStrictEqual(true)
+        let resolveAllDone: null | (() => void) = null
+        let gotLock: boolean | null = null
+        let timeout = 0 as any
+        const allDone = new Promise<void>(resolve => {
+            resolveAllDone = resolve
+            timeout = setTimeout(() => {
                 if (resolveAllDone) {
                     resolveAllDone()
+                    throw new Error(`Timeout reached when waiting for lock`)
                 }
-            }).catch((e) => {
-                console.error(e)
-            })
-            const outArray = MTX_IN.outputDataViews[0]
-            expect(gotLock).toStrictEqual(null)
-            expect(outArray).toStrictEqual(new Int32Array([10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
-            MTX_OUT.unlock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
-            await allDone
-        } catch (e) {
-            console.error(e)
-        }
+            }, 1000)
+        })
+        MTX_IN.lock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ).then((result) => {
+            if (resolveAllDone) {
+                gotLock = result
+                resolveAllDone()
+            }
+        })
+        const outArray = MTX_IN.outputDataViews[0]
+        expect(outArray).toStrictEqual(new Int32Array([10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+        MTX_OUT.unlock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE)
+        expect(gotLock).toStrictEqual(null)
+        await allDone
+        clearTimeout(timeout)
+        expect(gotLock).toStrictEqual(true)
     })
 })
