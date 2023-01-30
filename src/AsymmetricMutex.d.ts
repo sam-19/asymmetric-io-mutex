@@ -25,24 +25,22 @@ export interface AsymmetricMutex {
 }
 
 export type ArrayBufferPart = {
+    /**TODO: Option for a separate buffer from the mutex main buffer? NYI. */
     buffer: SharedArrayBuffer | null
     fields: MutexMetaField[]
+    /** Total length of this buffer part. */
     length: number
-    /** 32-bit position of this array part. */
+    /** 32-bit position of this array part (from the part start). */
     position: number
 }
 export type ArrayBufferEntry = ArrayBufferPart&{
-    array: {
-        length: number
-        /** 32-bit position of this array part. */
-        position: number
-        view: TypedNumberArray | null
-    }
+    view: TypedNumberArray | null
 }
 export type ArrayBufferList = ArrayBufferPart&{
     arrays: {
+        constructor: TypedNumberArrayConstructor
         length: number
-        /** 32-bit position of this array part. */
+        /** 32-bit position of this array part (from the data part start). */
         position: number
         view: TypedNumberArray | null
     }[]

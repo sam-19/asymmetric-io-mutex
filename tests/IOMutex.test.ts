@@ -26,8 +26,8 @@ afterAll(() => {
     (console.error as any).mockRestore()
 })
 
-// 1 MiB buffer
-const SAB = new SharedArrayBuffer(1*1024)
+// 2 kB buffer
+const SAB = new SharedArrayBuffer(2*1024)
 let BUFFER_POS = 0
 
 // Create a test class that extends IOMutex
@@ -256,7 +256,7 @@ describe('IOMutex tests', () => {
     test('Can write to output buffers', async () => {
         const write = await MTX_OUT.writeData([
             new Int32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-            new Int32Array([0, 2, 4, 6, 8, 10, 18, 14, 16, 18]),
+            new Int32Array([0, 2, 4, 6, 8, 10, 12, 14, 16, 18]),
             new Int32Array([0, 2, 4, 8, 16, 32, 64, 128, 256, 512]),
         ])
         expect(write).toStrictEqual(true)
@@ -267,7 +267,7 @@ describe('IOMutex tests', () => {
         })
         expect(dataIn).toStrictEqual([
             new Int32Array([10, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
-            new Int32Array([10, 0, 0, 2, 4, 6, 8, 10, 18, 14, 16, 18]),
+            new Int32Array([10, 0, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18]),
             new Int32Array([10, 0, 0, 2, 4, 8, 16, 32, 64, 128, 256, 512]),
         ])
     })
@@ -311,5 +311,39 @@ describe('IOMutex tests', () => {
         await allDone
         clearTimeout(timeout)
         expect(gotLock).toStrictEqual(true)
+        MTX_IN.unlock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ)
+    })
+    test('Can change buffered data location', async () => {
+        let mtxLen = 0
+        mtxLen += IOMutex.LOCK_LENGTH + (MTX_OUT.outputMetaView?.length || 0)
+        for (const view of MTX_OUT.outputDataViews) {
+            mtxLen += (view?.length || 0)
+        }
+        const prevStart = MTX_OUT.BUFFER_START
+        const newSAB = new Int32Array(SAB, 1024, mtxLen + MTX_OUT.BUFFER_START)
+        newSAB.set((new Int32Array(SAB)).subarray(MTX_OUT.BUFFER_START, mtxLen))
+        MTX_OUT.setBufferStartPosition(1024/4)
+        new Int32Array(SAB, prevStart*4, mtxLen).fill(0)
+        expect(MTX_OUT.BUFFER_START).toStrictEqual(1024/4)
+        const dataOut = await MTX_OUT.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return MTX_OUT.outputDataViews
+        })
+        expect(dataOut).toStrictEqual([
+            new Int32Array([10, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            new Int32Array([10, 0, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18]),
+            new Int32Array([10, 0, 0, 2, 4, 8, 16, 32, 64, 128, 256, 512]),
+        ])
+        const coupleSuccess = MTX_IN.setInputMutexProperties(MTX_OUT.propertiesForCoupling)
+        expect(coupleSuccess).toStrictEqual(true)
+        const setSuccess = await MTX_OUT.setDataFieldValue('fields-loaded', 1, [0, 2])
+        expect(setSuccess).toStrictEqual(true)
+        const dataIn = await MTX_IN.executeWithLock(IOMutex.MUTEX_SCOPE.INPUT, IOMutex.OPERATION_MODE.READ, () => {
+            return MTX_IN.inputDataViews
+        })
+        expect(dataIn).toStrictEqual([
+            new Int32Array([10, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+            new Int32Array([10, 0, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18]),
+            new Int32Array([10, 1, 0, 2, 4, 8, 16, 32, 64, 128, 256, 512]),
+        ])
     })
 })
