@@ -158,7 +158,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @remarks
      * Note that the new value will only affect mutexes initialized after the change!
      */
-    static get EMPTY_FIELD () {
+    static get EMPTY_FIELD (): number {
         return IOMutex._EMPTY_FIELD
     }
     static set EMPTY_FIELD (value: number) {
@@ -176,7 +176,7 @@ export default class IOMutex implements AsymmetricMutex {
     /**
      * The 32-bit starting index of the meta field array.
      */
-    static get META_START_POS () {
+    static get META_START_POS (): number {
         return IOMutex.LOCK_POS + IOMutex.LOCK_LENGTH
     }
 
@@ -188,7 +188,7 @@ export default class IOMutex implements AsymmetricMutex {
     /**
      * The empty field value of this instance (cannot be changed after initialization).
      */
-    get EMPTY_FIELD () {
+    get EMPTY_FIELD (): number {
         return this._EMPTY_FIELD
     }
 
@@ -197,7 +197,7 @@ export default class IOMutex implements AsymmetricMutex {
      * Mutex as input buffers.
      * @returns Object containing this Mutex's output buffers and field descriptions.
      */
-    get propertiesForCoupling () {
+    get propertiesForCoupling (): MutexExportProperties {
         // Only clone the relevant properties
         const props = {
             buffer: this._buffer,
@@ -244,7 +244,7 @@ export default class IOMutex implements AsymmetricMutex {
     /**
      * Typed number array views of the data arrays.
      */
-    get outputDataViews (): (TypedNumberArray | null)[] {
+    get outputDataViews (): (TypedNumberArray|null)[] {
         if (!this._outputData?.arrays) {
             return []
         }
@@ -255,21 +255,21 @@ export default class IOMutex implements AsymmetricMutex {
     /**
      * The SharedArrayBuffer holding the output buffer meta field data.
      */
-    get outputMetaView () {
+    get outputMetaView (): TypedNumberArray|null {
         return this._outputMeta.view
     }
 
     /**
      * The array of objects holding the output buffer meta fields.
      */
-    get outputMetaFields () {
+    get outputMetaFields (): MutexMetaField[] {
         return this._outputMeta.fields
     }
 
     /**
      * Get the total 32-bit length of this buffer.
      */
-    get totalLength () {
+    get totalLength (): number {
         let totLen = IOMutex.META_START_POS + this._outputMeta.length
         totLen += this._outputData?.arrays.reduce((total, a) => total + a.length, 0) || 0
         return totLen
@@ -280,9 +280,10 @@ export default class IOMutex implements AsymmetricMutex {
      * The lock value is stored at IOMutex.LOCK_POS index of a
      * Int32Array view of the buffer.
      * @example
-     * const lockValue = new Int32Array(M.writelockBuffer)[IOMutex.LOCK_POS]
+     * const bytePos = (M.BUFFER_START + IOMutex.LOCK_POS)*4 // Convert 32-bit index to byte index
+     * const lockView = new Int32Array(M.writelockBuffer, bytePos, IOMutex.LOCK_LENGTH)
      */
-    get writeLockBuffer () {
+    get writeLockBuffer (): SharedArrayBuffer|null {
         return this._writeLock.buffer
     }
 
@@ -293,7 +294,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param float2 - 32-bit float #2.
      * @returns - True if equal (enough), false if not.
      */
-    static floatsAreEqual (float1: number, float2: number) {
+    static floatsAreEqual (float1: number, float2: number): boolean {
         return (Math.abs(float1 - float2) < EPS)
     }
 
@@ -309,7 +310,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param fieldName - Name of the desired field.
      * @returns MutexMetaField or null if not found.
      */
-    protected _getDataFieldProperties = (scope: MutexScope, fieldName: string) => {
+    protected _getDataFieldProperties = (scope: MutexScope, fieldName: string): MutexMetaField|null => {
         // Select the mode-appropriate properties
         const dataFields = scope === IOMutex.MUTEX_SCOPE.INPUT
                                      ? this._inputDataFields
@@ -327,9 +328,9 @@ export default class IOMutex implements AsymmetricMutex {
      * @param scope - Mutex scope to use.
      * @param index - Index of the data buffer.
      * @param name - Name of the field.
-     * @returns Float32Array holding the field values or null on error.
+     * @returns Typed number array holding the field values or null on error.
      */
-    protected _getDataFieldValue = async (scope: MutexScope, index: number, fieldName: string) => {
+    protected _getDataFieldValue = async (scope: MutexScope, index: number, fieldName: string): Promise<TypedNumberArray|null> => {
         // Select the mode-appropriate properties
         const dataViews = scope === IOMutex.MUTEX_SCOPE.INPUT
                                     ? this._inputDataViews
@@ -360,9 +361,9 @@ export default class IOMutex implements AsymmetricMutex {
     /**
      * Return the appropriate lock view for the given `scope`.
      * @param scope - Mutex scope to use.
-     * @returns Buffer view as an Int32Array.
+     * @returns Buffer view as an Int32Array or null if the view is not set.
      */
-    protected _getLockView = (scope: MutexScope) => {
+    protected _getLockView = (scope: MutexScope): Int32Array|null => {
         return scope === IOMutex.MUTEX_SCOPE.INPUT
                          ? this._readLockView : this._writeLock.view
     }
@@ -375,7 +376,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param fieldName - Name of the desired field.
      * @returns MutexMetaField or null if not found.
      */
-    protected _getMetaFieldProperties = (scope: MutexScope, fieldName: string) => {
+    protected _getMetaFieldProperties = (scope: MutexScope, fieldName: string): MutexMetaField|null => {
         // Select the mode-appropriate properties
         const metaFields = scope === IOMutex.MUTEX_SCOPE.INPUT
                                      ? this._inputMetaFields
@@ -392,9 +393,9 @@ export default class IOMutex implements AsymmetricMutex {
      * Get the value of a meta field.
      * @param scope - Mutex scope to use.
      * @param fieldName - Name of the field.
-     * @returns Float32Array containing the values, or null on error.
+     * @returns Typed number array containing the values, or null on error.
      */
-    protected _getMetaFieldValue = async (scope: MutexScope, fieldName: string) => {
+    protected _getMetaFieldValue = async (scope: MutexScope, fieldName: string): Promise<TypedNumberArray|null> => {
         // Select the mode-appropriate properties
         const metaFields = scope === IOMutex.MUTEX_SCOPE.INPUT
                                      ? this._inputMetaFields
@@ -429,7 +430,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param values - The desired values (must match the length of the data field).
      * @returns True on success, false on error.
      */
-    protected _setOutputDataFieldValue = async (index: number, fieldName: string, ...values: number[]) => {
+    protected _setOutputDataFieldValue = async (index: number, fieldName: string, ...values: number[]): Promise<boolean> => {
         return this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {
             if (!this._outputData || !this._buffer) {
                 Log.error(`Could not set output data field value; the buffer has not been initialized.`, SCOPE)
@@ -474,7 +475,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param values - The desired values (must match the length of the data field).
      * @returns True on success, false on error.
      */
-    protected _setOutputMetaFieldValue = async (fieldName: string, ...values: number[]) => {
+    protected _setOutputMetaFieldValue = async (fieldName: string, ...values: number[]): Promise<boolean> => {
         return this.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.WRITE, () => {
             if (!this._buffer) {
                 Log.error(`Could not set output meta field value; the buffer has not been initialized.`, SCOPE)
@@ -528,7 +529,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param mode - Mode of operation.
      * @param f - The function to execute.
      */
-    async executeWithLock (scope: MutexScope, mode: MutexMode, f: (() => any)) {
+    async executeWithLock (scope: MutexScope, mode: MutexMode, f: (() => any)): Promise<any> {
         const requiresLock = !this._lockScope[scope][mode]
         if (requiresLock) {
             const lockSuccess = await this.lock(scope, mode)
@@ -553,7 +554,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param indices - Array indices to include (defaults to all).
      * @returns An array of values (null if the value for given index could not be retrieved) for each requested data array.
      */
-    async getDataFieldValue (field: string, indices: number | number[] = []): Promise<(number|null)[]> {
+    async getDataFieldValue (field: string, indices: number | number[] = []): Promise<(number|TypedNumberArray|null)[]> {
         if (!this._outputData || !this._buffer) {
             Log.error(`Cannot get data field value before output data has been initialized.`, SCOPE)
             return []
@@ -585,7 +586,7 @@ export default class IOMutex implements AsymmetricMutex {
             Log.error(`List of indices given to 'getDataFieldValue' did not contain a single valid array index.`, SCOPE)
             return []
         }
-        const values = [] as (number|null)[]
+        const values = [] as (number|TypedNumberArray|null)[]
         for (let i=0; i<this._outputData.arrays.length; i++) {
             if (indices.length && !indices.includes(i)) {
                 continue
@@ -685,7 +686,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param constructor - Constructor of the typed array.
      * @returns true/false
      */
-    isAllowedTypeConstructor (constructor: TypedNumberArrayConstructor) {
+    isAllowedTypeConstructor (constructor: TypedNumberArrayConstructor): boolean {
         if (constructor.BYTES_PER_ELEMENT !== 4) {
             // Since the lock buffer must use a 32-bit integer, also the other views' element
             // sizes must be 32-bit numbers (arrays cannot have fractional indices).
@@ -700,7 +701,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param mode - Mode of operation.
      * @returns True/false.
      */
-    isAvailable (scope: MutexScope, mode: MutexMode) {
+    isAvailable (scope: MutexScope, mode: MutexMode): boolean {
         const lockView = this._getLockView(scope)
         if (!lockView) {
             Log.error(`'isAvailable' method called before mutex was initialized.`, SCOPE)
@@ -721,7 +722,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param maxTries - Number of times the mutex will try again (minus the first try) if the buffer is locked. Each try lasts a maximum of 100 ms (optional, default 50 tries = 5 seconds).
      * @return Success of locking as true/false.
      */
-    async lock (scope: MutexScope, mode: MutexMode, maxTries = 50) {
+    async lock (scope: MutexScope, mode: MutexMode, maxTries = 50): Promise<boolean> {
         // This async construction may be futile now, but it'll be ready when Atomics.asyncLock()
         // is made available.
         return new Promise<boolean>(async (resolve) => {
@@ -785,7 +786,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param mode - Mode of operation.
      * @returns Promise that resolves when the mode of operation is available.
      */
-    async onceAvailable (scope: MutexScope, mode: MutexMode) {
+    async onceAvailable (scope: MutexScope, mode: MutexMode): Promise<boolean> {
         return new Promise<boolean>((resolve) => {
             const input = (mode === IOMutex.OPERATION_MODE.READ)
             const lockView = this._getLockView(scope)
@@ -1220,7 +1221,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param mode - Mode of operation.
      * @return Whether the buffer was unlocked or not (will also return false if there are other inputs left)
      */
-    unlock (scope: MutexScope, mode: MutexMode) {
+    unlock (scope: MutexScope, mode: MutexMode): boolean {
         const input = (mode === IOMutex.OPERATION_MODE.READ)
         const lockView = this._getLockView(scope)
         if (!lockView) {
@@ -1260,7 +1261,7 @@ export default class IOMutex implements AsymmetricMutex {
      * @param dataIndex - Index of the data buffer (only if fieldType is 'data', defaults to last data buffer).
      * @returns A promise that will resolve with the new number at the given field or reject on error.
      */
-    waitForFieldUpdate (fieldType: 'data' | 'meta', fieldIndex: number, dataIndex?: number) {
+    waitForFieldUpdate (fieldType: 'data' | 'meta', fieldIndex: number, dataIndex?: number): Promise<number> {
         return new Promise<number>((resolve, reject) => {
             if (fieldIndex < 0) {
                 reject(`Cannot wait for field update, given field index is less than zero.`)
