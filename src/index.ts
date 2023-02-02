@@ -1318,4 +1318,4 @@ export default class IOMutex implements AsymmetricMutex {
     }
 }
 
-export { MutexExportProperties, MutexMetaField, MutexMode, MutexScope }
+export { ArrayBufferEntry, ArrayBufferList, MutexExportProperties, MutexMetaField, MutexMode, MutexScope }
