@@ -934,7 +934,7 @@ export default class IOMutex implements AsymmetricMutex {
                     continue
                 }
                 if (!dataIdx && view.length - this._outputDataFieldsLen > data.length) {
-                    Log.warn(`New data is shorter than the data array length; end of the array is not updated.`, SCOPE)
+                    Log.debug(`New data is shorter than the data array length; end of the array is not updated.`, SCOPE)
                 }
                 if (view.length - this._outputDataFieldsLen < data.length + dataIdx) {
                     Log.warn(`New data is longer than the data array length; end of the new data is truncated.`, SCOPE)
