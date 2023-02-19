@@ -542,7 +542,7 @@ export default class IOMutex implements AsymmetricMutex {
         if (requiresLock) {
             const unlockSuccess = this.unlock(scope, mode)
             if (!unlockSuccess) {
-                if (mode === IOMutex.OPERATION_MODE.READ) {
+                if (mode === IOMutex.OPERATION_MODE.WRITE) {
                     Log.error(`Target buffer was not unlocked after a write operation.`, SCOPE)
                 } else {
                     Log.debug(`Target buffer was not unlocked after a read operations, at least one other process was left reading the buffer.`, SCOPE)
