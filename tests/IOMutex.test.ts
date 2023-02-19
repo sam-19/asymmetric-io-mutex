@@ -79,6 +79,10 @@ describe('IOMutex tests', () => {
     test('Class is defined', () => {
         expect(IOMutex).toBeDefined()
     })
+    test('Can set log level', () => {
+        const logMutex = new IOMutex()
+        logMutex.setLogLevel('ERROR')
+    })
     test('Can construct with all 32-bit array types', async () => {
         const int32Mutex = new TestMutex(
             Int32Array,

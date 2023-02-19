@@ -1158,6 +1158,11 @@ export default class IOMutex implements AsymmetricMutex {
     }
 
     /**
+     * Set log printing threshold.
+     */
+    setLogLevel = Log.setPrintThreshold
+
+    /**
      * Set the given fields as meta information fields.
      * @param fields - Meta fields to use.
      * @returns Success (true/false)
