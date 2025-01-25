@@ -1,25 +1,25 @@
 /**
  * Asymmetric input-output mutex for processing shared memory arrays.
  * @package    asymmetric-io-mutex
- * @copyright  2024 Sampsa Lohi
+ * @copyright  2025 Sampsa Lohi
  * @license    MIT
  */
 
 import { EPS, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } from "@stdlib/constants-float32"
-import Log from 'scoped-ts-log'
-import {
-    type ArrayBufferArray,
-    type ArrayBufferEntry,
-    type ArrayBufferList,
-    type ArrayBufferPart,
-    type AsymmetricMutex,
-    type MutexExportProperties,
-    type MutexMetaField,
-    type MutexMode,
-    type MutexScope,
-    type ReadonlyTypedArray,
-    type TypedNumberArray,
-    type TypedNumberArrayConstructor
+import Log from 'scoped-event-log'
+import type {
+    ArrayBufferArray,
+    ArrayBufferEntry,
+    ArrayBufferList,
+    ArrayBufferPart,
+    AsymmetricMutex,
+    MutexExportProperties,
+    MutexMetaField,
+    MutexMode,
+    MutexScope,
+    ReadonlyTypedArray,
+    TypedNumberArray,
+    TypedNumberArrayConstructor
 } from "./AsymmetricMutex"
 
 const SCOPE = 'IOMutex'
@@ -651,7 +651,7 @@ export default class IOMutex implements AsymmetricMutex {
         return true
     }
 
-    isAllowedTypeConstructor (constructor: TypedNumberArrayConstructor): boolean {
+    isAllowedTypeConstructor (constructor: TypedNumberArrayConstructor<SharedArrayBuffer>): boolean {
         if (constructor.BYTES_PER_ELEMENT !== 4) {
             // Since the lock buffer must use a 32-bit integer, also the other views' element
             // sizes must be 32-bit numbers (arrays cannot have fractional indices).
@@ -873,7 +873,12 @@ export default class IOMutex implements AsymmetricMutex {
         })
     }
 
-    setDataArrays (dataArrays: { constructor: TypedNumberArrayConstructor, length: number }[] = []): boolean {
+    setDataArrays (
+        dataArrays: {
+            constructor: TypedNumberArrayConstructor<SharedArrayBuffer>,
+            length: number
+        }[] = []
+    ): boolean {
         if (!this._buffer) {
             Log.error(`Cannot set data arrays before main buffer has been initialized.`, SCOPE)
             return false

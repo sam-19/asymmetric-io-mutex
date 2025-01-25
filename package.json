@@ -17,14 +17,15 @@
   "author": "Sampsa Lohi",
   "license": "MIT",
   "devDependencies": {
-    "@types/jest": "^29.0.2",
-    "jest": "^29.0.3",
-    "ts-jest": "^29.0.1",
-    "typescript": "^4.8.3"
+    "@types/jest": "29.5",
+    "jest": "29.7",
+    "jest-environment-jsdom": "29.7",
+    "ts-jest": "29.2",
+    "typescript": "5.6"
   },
   "dependencies": {
     "@stdlib/constants-float32": "^0.0.6",
-    "scoped-ts-log": "^0.2.0"
+    "scoped-event-log": "^2.0.1"
   },
   "repository": {
     "type": "git",

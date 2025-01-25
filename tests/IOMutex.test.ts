@@ -1,7 +1,7 @@
 /**
  * Asymmetric I/O Mutex tests.
  * @package    asymmetric-io-mutex
- * @copyright  2022 Sampsa Lohi
+ * @copyright  2025 Sampsa Lohi
  * @license    MIT
  */
 
@@ -32,7 +32,14 @@ let BUFFER_POS = 0
 
 // Create a test class that extends IOMutex
 class TestMutex extends IOMutex {
-    constructor (viewConstructor: TypedNumberArrayConstructor, metaFields: MutexMetaField[], dataFields: MutexMetaField[], dataArrays: TypedNumberArray[], dataLength: number, coupledMutexProps?: MutexExportProperties) {
+    constructor (
+        viewConstructor: TypedNumberArrayConstructor<SharedArrayBuffer>,
+        metaFields: MutexMetaField[],
+        dataFields: MutexMetaField[],
+        dataArrays: TypedNumberArray[],
+        dataLength: number,
+        coupledMutexProps?: MutexExportProperties
+    ) {
         super(
             metaFields,
             undefined,

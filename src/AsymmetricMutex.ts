@@ -1,12 +1,12 @@
 /**
  * Asymmetric I/O Mutex types.
  * @package    asymmetric-io-mutex
- * @copyright  2024 Sampsa Lohi
+ * @copyright  2025 Sampsa Lohi
  * @license    MIT
  */
 
-import Log from "scoped-ts-log"
-import { ReadonlyFloat32Array, ReadonlyInt8Array, ReadonlyInt16Array, ReadonlyInt32Array, ReadonlyUint8Array, ReadonlyUint16Array, ReadonlyUint32Array } from "./ReadonlyTypedArray"
+import Log from "scoped-event-log"
+import type { ReadonlyFloat32Array, ReadonlyInt32Array, ReadonlyUint32Array } from "./ReadonlyTypedArray"
 
 export interface AsymmetricMutex {
     /** 32-bit starting position of the part allocated to this mutex in the buffer. */
@@ -70,7 +70,7 @@ export interface AsymmetricMutex {
      * @param constructor - Constructor of the typed array.
      * @returns true/false
      */
-    isAllowedTypeConstructor (constructor: TypedNumberArrayConstructor): boolean
+    isAllowedTypeConstructor (constructor: TypedNumberArrayConstructor<SharedArrayBuffer>): boolean
     /**
      * Check if the shared array is available for the given mode of operation.
      * @param scope - Mutex scope to use.
@@ -126,7 +126,7 @@ export interface AsymmetricMutex {
      * @param dataArrays - Arrays to set as new data arrays (empty array will remove all current arrays).
      * @returns Success (true/false)
      */
-    setDataArrays (dataArrays?: { constructor: TypedNumberArrayConstructor, length: number }[]): boolean
+    setDataArrays (dataArrays?: { constructor: TypedNumberArrayConstructor<SharedArrayBuffer>, length: number }[]): boolean
     /**
      * Set data field descriptors or reset their positions if meta fields have changed.
      * @param fields - Optional new fields (if empty, will recalculate positions of existing fields).
@@ -204,7 +204,7 @@ export type ArrayBufferEntry = ArrayBufferPart&{
  */
 export type ArrayBufferArray = {
     /** Array data type constructor. */
-    constructor: TypedNumberArrayConstructor
+    constructor: TypedNumberArrayConstructor<SharedArrayBuffer>
     /** Length in array data units. */
     length: number
     /** 32-bit position of this array part (from the data part start). */
@@ -238,7 +238,7 @@ export type MutexExportProperties = {
  */
 export type MutexMetaField = {
     /** Constructor for the metadata view. */
-    constructor: TypedNumberArrayConstructor
+    constructor: TypedNumberArrayConstructor<SharedArrayBuffer>
     /** Length of this field in data units (i.e. number of array elements of a constructed view). */
     length: number
     /** Name of this metadata field. */
@@ -268,7 +268,8 @@ export type TypedNumberArray = Float32Array | Int32Array | Uint32Array
  * element length, smaller than 32-bit elements might cause problems and are not supported. 64-bit element arrays
  * may get support in the future.
  */
-export type TypedNumberArrayConstructor = Float32ArrayConstructor | Int32ArrayConstructor | Uint32ArrayConstructor
+// @ts-expect-error - Version 5.7 of TypeScript requires array buffer type for typed number arrays.
+export type TypedNumberArrayConstructor<T extends ArrayBufferLike> = Float32ArrayConstructor<T> | Int32ArrayConstructor<T> | Uint32ArrayConstructor<T>
 /**
  * A pseudo-type used as a reminder that mutexes are not allowed to modify the contents of their input arrays.
  */
