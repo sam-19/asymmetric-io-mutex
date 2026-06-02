@@ -518,15 +518,24 @@ export default class IOMutex implements AsymmetricMutex {
                 return
             }
         }
-        const returnValue = f()
-        if (requiresLock) {
-            const unlockSuccess = this.unlock(scope, mode)
-            if (!unlockSuccess) {
-                if (mode === IOMutex.OPERATION_MODE.WRITE) {
-                    Log.error(`Target buffer was not unlocked after a write operation.`, SCOPE)
-                } else {
-                    Log.debug(`Target buffer was not unlocked after a read operations, at least one other process ` +
-                              `was left reading the buffer.`, SCOPE)
+        // try/finally so that an exception thrown inside `f()` doesn't leave the lock permanently
+        // held. Without this, a synchronous throw (typed-array index out of range, undefined view
+        // dereference, etc.) skips the unlock and the lock value stays at `WRITE_LOCK_VALUE`
+        // forever — manifesting as 5-second `Maximum retries of locking operation reached`
+        // timeouts on every subsequent `executeWithLock` call against the same scope.
+        let returnValue: any
+        try {
+            returnValue = f()
+        } finally {
+            if (requiresLock) {
+                const unlockSuccess = this.unlock(scope, mode)
+                if (!unlockSuccess) {
+                    if (mode === IOMutex.OPERATION_MODE.WRITE) {
+                        Log.error(`Target buffer was not unlocked after a write operation.`, SCOPE)
+                    } else {
+                        Log.debug(`Target buffer was not unlocked after a read operations, at least one other process ` +
+                                  `was left reading the buffer.`, SCOPE)
+                    }
                 }
             }
         }
@@ -607,8 +616,22 @@ export default class IOMutex implements AsymmetricMutex {
         return value !== null ? value[0] : value
     }
 
-    initialize (buffer: SharedArrayBuffer, startPosition: number = 0): boolean {
-        if (this._buffer) {
+    /**
+     * Bind the mutex to a `SharedArrayBuffer` and build the lock + meta views.
+     *
+     * @param buffer        Backing buffer.
+     * @param startPosition Offset (in 32-bit slots) at which this mutex's region begins.
+     * @param overwrite     When `true`, allow re-binding even if the mutex already
+     *                      has a buffer attached. Use this on the re-initialisation
+     *                      path of the three-level cache lifecycle: the existing
+     *                      mutex layout (field definitions, data array layout) is
+     *                      preserved, and only the buffer-backed views are rebuilt.
+     *                      Data array views are NOT rebuilt by this call — invoke
+     *                      {@link rebuildDataArrayViews} after returning if the data
+     *                      array layout has been preserved across the release cycle.
+     */
+    initialize (buffer: SharedArrayBuffer, startPosition: number = 0, overwrite: boolean = false): boolean {
+        if (this._buffer && !overwrite) {
             Log.error(`Cannot re-initialize an already initialized mutex.`, SCOPE)
             return false
         }
@@ -647,6 +670,37 @@ export default class IOMutex implements AsymmetricMutex {
                 const view = new field.constructor(buffer, fieldPos*4, field.length)
                 view[0] = this._EMPTY_FIELD
             }
+        }
+        return true
+    }
+
+    /**
+     * Rebuild every output data array's typed-array view over the currently bound
+     * buffer using the array layout already stored in `_outputData.arrays`. The
+     * positions, lengths, and constructors are taken from the existing entries —
+     * no new arrays are added or removed.
+     *
+     * Companion of {@link initialize}`(buffer, start, overwrite=true)`: the bare
+     * `initialize` rebuilds only the lock and meta views; this call rebuilds the
+     * data array views. Together they constitute the "cheap re-init" path of the
+     * three-level cache lifecycle — the costly `setDataArrays` setup walk is
+     * skipped because the layout is preserved.
+     */
+    rebuildDataArrayViews (): boolean {
+        if (!this._buffer) {
+            Log.error(`Cannot rebuild data array views before main buffer has been initialized.`, SCOPE)
+            return false
+        }
+        if (!this._outputData) {
+            Log.error(`Cannot rebuild data array views before output data properties have been initialized.`, SCOPE)
+            return false
+        }
+        for (const arr of this._outputData.arrays) {
+            arr.view = new arr.constructor(
+                this._buffer,
+                (this.BUFFER_START + arr.position) * 4,
+                arr.length
+            )
         }
         return true
     }
@@ -779,6 +833,32 @@ export default class IOMutex implements AsymmetricMutex {
             this._outputData.fields.splice(0)
             this._outputData.buffer = null
         }
+        this._readLockView = null
+        this._writeLock.view = null
+        this._writeLock.buffer = null
+        this._buffer = null
+    }
+
+    /**
+     * Drop only the buffer-backed views (output data array views, meta view,
+     * lock view) and the buffer reference itself, while preserving the OUTPUT
+     * data array layout (positions, lengths, constructors) and meta field
+     * definitions. After this call the mutex is in a "shell" state — its layout
+     * is intact but it has no backing buffer; rebind via
+     * `initialize(newBuffer, start, true)` + `rebuildDataArrayViews()`.
+     *
+     * Input-side state (`_inputDataFields`, `_inputDataViews`, coupled buffer
+     * ref) is intentionally untouched — the caller is responsible for
+     * re-coupling the input side when the source mutex's buffer is replaced.
+     * Use {@link releaseBuffers} when full teardown is needed.
+     */
+    releaseOutputBufferViews () {
+        if (this._outputData) {
+            for (const arr of this._outputData.arrays) {
+                arr.view = null
+            }
+        }
+        this._outputMeta.view = null
         this._readLockView = null
         this._writeLock.view = null
         this._writeLock.buffer = null

@@ -62,9 +62,12 @@ export interface AsymmetricMutex {
      * Initialize the mutex using the given `buffer`.
      * @param buffer - Buffer for this mutex.
      * @param startPosition - Optional 32-bit start position of this mutex within the buffer (defaults to zero).
+     * @param overwrite - When `true`, allow re-binding to a new buffer even when the mutex
+     *                    already has one attached. Used by the cheap re-init path of the
+     *                    three-level cache lifecycle (see `releaseOutputBufferViews`).
      * @return Success (true/false)
      */
-    initialize (buffer: SharedArrayBuffer, startPosition?: number): boolean
+    initialize (buffer: SharedArrayBuffer, startPosition?: number, overwrite?: boolean): boolean
     /**
      * Check if the given typed array constructor is allowed.
      * @param constructor - Constructor of the typed array.
@@ -95,10 +98,25 @@ export interface AsymmetricMutex {
      */
     onceAvailable (scope: MutexScope, mode: MutexMode): Promise<boolean>
     /**
+     * Rebuild every output data array view over the currently bound buffer using
+     * the existing layout. Companion of `initialize(..., overwrite=true)` on the
+     * cheap re-init path.
+     */
+    rebuildDataArrayViews (): boolean
+    /**
+     * Drop the buffer-backed views and buffer reference but preserve the output
+     * data array layout and meta field definitions, so the mutex can be cheaply
+     * rebound to a fresh buffer via `initialize(newBuffer, start, true)` +
+     * {@link rebuildDataArrayViews}. Level 1 of the three-level cache lifecycle.
+     */
+    releaseOutputBufferViews (): void
+    /**
      * Remove all references to buffers in this mutex.
      *
      * **WARNING**: This mutex will irreversibly lose the ability to access
-     *            data contained in the released buffers.
+     *            data contained in the released buffers. Use
+     *            {@link releaseOutputBufferViews} instead when the layout
+     *            should be preserved for a subsequent re-initialisation.
      */
     releaseBuffers (): void
     /**
