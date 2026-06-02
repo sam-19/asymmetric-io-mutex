@@ -3,7 +3,6 @@
   "version": "0.9.1",
   "description": "Shared array buffer mutex with asymmetric, configurable input and output buffers",
   "main": "dist/index.js",
-  "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
   "files": [
     "dist/*",
