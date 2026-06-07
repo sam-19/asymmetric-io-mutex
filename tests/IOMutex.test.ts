@@ -5,7 +5,6 @@
  * @license    MIT
  */
 
-import { describe, expect, test } from '@jest/globals'
 import IOMutex from '../src'
 import { MutexExportProperties, MutexMetaField, TypedNumberArray, TypedNumberArrayConstructor } from '../src/AsymmetricMutex'
 

@@ -5,7 +5,11 @@
  * @license    MIT
  */
 
-import { EPS, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } from "@stdlib/constants-float32"
+// @stdlib/constants-float32 is a CommonJS module whose named exports are not statically
+// detectable, so a named import breaks under native ESM. Default-import the namespace and
+// destructure; this resolves correctly under both bundlers and Node ESM.
+import stdlibFloat32 from "@stdlib/constants-float32"
+const { EPS, MAX_SAFE_INTEGER, MIN_SAFE_INTEGER } = stdlibFloat32
 import Log from 'scoped-event-log'
 import type {
     ArrayBufferArray,

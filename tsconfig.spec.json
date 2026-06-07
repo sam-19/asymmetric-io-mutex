@@ -1,0 +1,7 @@
+{
+  // Test compilation config — build options from ./tsconfig.json plus Jest's ambient
+  // types from the shared ../tsconfig.jest.json (array-extends; last entry wins for `types`).
+  // Referenced by jest.config.cjs so the published build (tsc on tsconfig.json) stays clean.
+  "extends": ["./tsconfig.json", "../tsconfig.jest.json"],
+  "include": ["src", "tests"]
+}
