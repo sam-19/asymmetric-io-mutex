@@ -1,6 +1,6 @@
 {
   "name": "asymmetric-io-mutex",
-  "version": "0.9.1",
+  "version": "1.0.0",
   "description": "Shared array buffer mutex with asymmetric, configurable input and output buffers",
   "type": "module",
   "main": "dist/index.js",
