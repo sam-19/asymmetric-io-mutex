@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@stdlib/constants-float32": "^0.0.6",
-    "scoped-event-log": "^3.0.0"
+    "scoped-event-log": "^3.2.0"
   },
   "repository": {
     "type": "git",
