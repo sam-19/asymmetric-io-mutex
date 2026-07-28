@@ -166,6 +166,15 @@ export interface AsymmetricMutex {
      */
     setInputMutexProperties (input: MutexExportProperties): boolean
     /**
+     * Rebuild input-side views (read lock, input meta, input data) whose positions fall inside
+     * one of the given moved regions. Called after the memory manager has rearranged the shared
+     * buffer and the coupled source mutex's region has moved; views outside every moved region
+     * are left untouched.
+     * @param moves - Region moves applied to the underlying buffer, in 32-bit element indices.
+     * @returns Success (true/false)
+     */
+    shiftInputPositions (moves: BufferRangeMove[]): boolean
+    /**
      * Set log printing threshold.
      */
     setLogLevel: typeof Log.setPrintThreshold
@@ -197,6 +206,19 @@ export interface AsymmetricMutex {
      * @returns A promise that will resolve with the new number at the given field or reject on error.
      */
     waitForFieldUpdate (fieldType: 'data' | 'meta', fieldIndex: number, dataIndex?: number): Promise<number>
+}
+/**
+ * A single region move performed on the underlying shared buffer by an external coordinator
+ * (such as a memory manager rearranging allocations). All values are 32-bit element indices;
+ * a view whose position falls inside `[start, end)` has moved to `position + delta`.
+ */
+export type BufferRangeMove = {
+    /** Start index of the region before the move (inclusive). */
+    start: number
+    /** End index of the region before the move (exclusive). */
+    end: number
+    /** Signed index delta applied to the region. */
+    delta: number
 }
 /**
  * A part of memory buffer containing either a single data array or set of related data arrays.

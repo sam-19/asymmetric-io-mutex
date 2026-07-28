@@ -17,6 +17,7 @@ import type {
     ArrayBufferList,
     ArrayBufferPart,
     AsymmetricMutex,
+    BufferRangeMove,
     MutexExportProperties,
     MutexMetaField,
     MutexMode,
@@ -650,9 +651,10 @@ export default class IOMutex implements AsymmetricMutex {
             const fieldsLen = this._outputData.fields.reduce((total, f) => total + f.length, 0)
             endIndex += this._outputData.arrays.length*fieldsLen
         }
-        if (buffer.byteLength < endIndex) {
+        if (buffer.byteLength < endIndex*4) {
+            // endIndex counts 32-bit elements; byteLength counts bytes.
             Log.error(`The given buffer is too small to contain current meta and data arrays (${buffer.byteLength} ` +
-                      `vs ${endIndex}).`, SCOPE)
+                      `bytes vs ${endIndex*4}).`, SCOPE)
             return false
         }
         this._buffer = buffer
@@ -879,9 +881,12 @@ export default class IOMutex implements AsymmetricMutex {
             return false
         }
         this._BUFFER_START = position
-        // Set array lock view
+        // Set array lock view. The view offset is in bytes, so the 32-bit element position
+        // must be multiplied by the element size — omitting the multiplier binds the lock
+        // view to a misaligned cell and every subsequent lock operation addresses the wrong
+        // memory.
         this._writeLock.view = new Int32Array(
-            this._buffer, this.BUFFER_START + IOMutex.LOCK_POS, IOMutex.LOCK_LENGTH
+            this._buffer, (this.BUFFER_START + IOMutex.LOCK_POS)*4, IOMutex.LOCK_LENGTH
         )
         // Set meta array position
         if (this._outputMeta.view) {
@@ -1156,6 +1161,49 @@ export default class IOMutex implements AsymmetricMutex {
         return true
     }
 
+    shiftInputPositions (moves: BufferRangeMove[]): boolean {
+        if (!moves.length) {
+            return true
+        }
+        if (this._readLockView) {
+            this._readLockView = this._applyRegionMove(this._readLockView, moves)
+        }
+        if (this._inputMetaView) {
+            this._inputMetaView = this._applyRegionMove(this._inputMetaView, moves)
+        }
+        for (let i=0; i<this._inputDataViews.length; i++) {
+            if (this._inputDataViews[i]) {
+                this._inputDataViews[i] = this._applyRegionMove(this._inputDataViews[i], moves)
+            }
+        }
+        return true
+    }
+
+    /**
+     * Rebuild the given buffer view at a new position if its current 32-bit element index falls
+     * inside one of the moved regions. Views outside every moved region are returned unchanged.
+     * @param view - The typed-array view to (possibly) rebuild.
+     * @param moves - Region moves applied to the underlying buffer, in 32-bit element indices.
+     */
+    protected _applyRegionMove<T> (view: T, moves: BufferRangeMove[]): T {
+        const typed = view as unknown as TypedNumberArray
+        const index = typed.byteOffset/4
+        for (const move of moves) {
+            if (index >= move.start && index < move.end) {
+                if (!move.delta) {
+                    return view
+                }
+                const viewConstructor = typed.constructor as TypedNumberArrayConstructor<SharedArrayBuffer>
+                return new viewConstructor(
+                    typed.buffer as SharedArrayBuffer,
+                    (index + move.delta)*4,
+                    typed.length
+                ) as unknown as T
+            }
+        }
+        return view
+    }
+
     setLogLevel = Log.setPrintThreshold
 
     setMetaFields (fields: MutexMetaField[]): boolean {
@@ -1311,6 +1359,7 @@ export {
     ArrayBufferList,
     ArrayBufferPart,
     AsymmetricMutex,
+    BufferRangeMove,
     IOMutex,
     MutexExportProperties,
     MutexMetaField,
