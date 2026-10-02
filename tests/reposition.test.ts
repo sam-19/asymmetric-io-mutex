@@ -12,13 +12,14 @@
  * @license    MIT
  */
 
+import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import IOMutex from '../src'
 import { BufferRangeMove, MutexMetaField } from '../src/AsymmetricMutex'
 
 let expectError = false
 // Catch console errors
 beforeAll(() => {
-    jest.spyOn(console, 'error').mockImplementation((message: any) => {
+    vi.spyOn(console, 'error').mockImplementation((message: any) => {
         if (!expectError) {
             console.log('Unexpected error:', message)
         }

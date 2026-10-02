@@ -1,0 +1,12 @@
+{
+  // The suite is type-checked as a step of `npm test`, ahead of the unit run. It needs no ambient
+  // type package: the test globals are imported from vitest by name, which is why the build config's
+  // empty `types` carries over unchanged.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src", "tests"],
+  "exclude": ["dist", "node_modules"]
+}
