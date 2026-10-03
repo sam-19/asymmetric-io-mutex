@@ -7,7 +7,12 @@
 
 import { afterAll, afterEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import IOMutex from '../src'
-import { MutexExportProperties, MutexMetaField, TypedNumberArray, TypedNumberArrayConstructor } from '../src/AsymmetricMutex'
+import {
+    MutexExportProperties,
+    MutexMetaField,
+    TypedNumberArray,
+    TypedNumberArrayConstructor,
+} from '../src/AsymmetricMutex'
 
 let expectError = false
 // Catch console errors
@@ -142,17 +147,23 @@ describe('IOMutex tests', () => {
             ],
             10
         )
-        const dataUint = await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            return uint32Mutex.outputDataViews
-        })
+        const dataUint = await int32Mutex.executeWithLock(
+            IOMutex.MUTEX_SCOPE.OUTPUT,
+            IOMutex.OPERATION_MODE.READ,
+            () => uint32Mutex.outputDataViews
+        )
         expect(dataUint).toStrictEqual([new Uint32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        const dataInt = await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            return int32Mutex.outputDataViews
-        })
+        const dataInt = await int32Mutex.executeWithLock(
+            IOMutex.MUTEX_SCOPE.OUTPUT,
+            IOMutex.OPERATION_MODE.READ,
+            () => int32Mutex.outputDataViews
+        )
         expect(dataInt).toStrictEqual([new Int32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
-        const dataFloat = await int32Mutex.executeWithLock(IOMutex.MUTEX_SCOPE.OUTPUT, IOMutex.OPERATION_MODE.READ, () => {
-            return float32Mutex.outputDataViews
-        })
+        const dataFloat = await int32Mutex.executeWithLock(
+            IOMutex.MUTEX_SCOPE.OUTPUT,
+            IOMutex.OPERATION_MODE.READ,
+            () => float32Mutex.outputDataViews
+        )
         expect(dataFloat).toStrictEqual([new Float32Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])])
     })
     const MTX_OUT = new TestMutex(

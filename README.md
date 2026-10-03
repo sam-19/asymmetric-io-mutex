@@ -1,8 +1,6 @@
 # Asymmetric I/O Mutex
 A JavaScript shared array buffer mutex with asymmetric input and output buffers.
 
-Version 0.6 greatly extends the class and is a breaking change.
-
 ## Installation
 
 `npm install --save asymmetric-io-mutex`
@@ -20,6 +18,7 @@ Version 0.6 greatly extends the class and is a breaking change.
 * Always lock the buffers before reading or modifying them (technically you don't have to, but that would kind of defeat the whole point). The `executeWithLock()` method takes care of the locking and unlocking for you.
 * An output mutex's buffers and meta fields should be passed to the new input mutex with the `propertiesForCoupling` property.
 * Int32Array is the expected metadata buffer type and the default empty field value is set accordingly. You can change it by setting the IOMutex.EMPTY_FIELD **before** initiating the mutex.
+* A field's `position` is an offset in 32-bit elements from the start of the region it belongs to. Give it `IOMutex.UNASSIGNED_VALUE` to have the mutex lay the fields out in declaration order, which is what `setMetaFields()` and `setDataFields()` do for every field that does not name a position of its own.
 
 Simple usage:
 ```javascript
@@ -33,7 +32,7 @@ class MyCustomMutex extends IOMutex {
         // Find out required buffer length
         let bufferLen = IOMutex.LOCK_LENGTH // 32-bit numbers needed for the lock
         bufferLen += metaFields.reduce((totalLen, f) => totalLen + f.length, 0)
-        const dataFLen += dataFields.reduce((totalLen, f) => totalLen + f.length, 0)
+        const dataFLen = dataFields.reduce((totalLen, f) => totalLen + f.length, 0)
         bufferLen += dataArrays.reduce((totalLen, a) => totalLen + a.length + dataFLen, 0)
         this.initialize(new SharedArrayBuffer(bufferLen*4)) // 4 bytes per 32-bit element
         this.setDataArrays(dataArrays.map(a => { return { constructor: dataConstructor, length: a.length } }))

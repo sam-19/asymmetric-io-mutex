@@ -17,14 +17,14 @@ export interface AsymmetricMutex {
      * this mutex was initialized.
      */
     EMPTY_FIELD: number
-    /** This Mutex's output buffers and field descriptions to be used in a coupled Mutex as input buffers. */
-    propertiesForCoupling: MutexExportProperties
     /** Typed number array views of the output data arrays. */
     outputDataViews: (TypedNumberArray | null)[]
     /** An array of objects holding the output buffer meta field properties. */
     outputMetaFields: MutexMetaField[]
     /** A typed array view holding the output buffer metadata. */
     outputMetaView: TypedNumberArray | null
+    /** This Mutex's output buffers and field descriptions to be used in a coupled Mutex as input buffers. */
+    propertiesForCoupling: MutexExportProperties
     /** The total 32-bit length of this buffer. */
     totalLength: number
     /**
@@ -49,7 +49,8 @@ export interface AsymmetricMutex {
      * Get the value stored in `field` in all or some of the data arrays.
      * @param field - Name of the field.
      * @param indices - Array indices to include (defaults to all).
-     * @returns An array of values (null if the value for given index could not be retrieved) for each requested data array.
+     * @returns An array of values for each requested data array, with null for every index whose
+     *          value could not be retrieved.
      */
     getDataFieldValue (field: string, indices?: number | number[]): Promise<(number|TypedNumberArray|null)[]>
     /**
@@ -104,13 +105,6 @@ export interface AsymmetricMutex {
      */
     rebuildDataArrayViews (): boolean
     /**
-     * Drop the buffer-backed views and buffer reference but preserve the output
-     * data array layout and meta field definitions, so the mutex can be cheaply
-     * rebound to a fresh buffer via `initialize(newBuffer, start, true)` +
-     * {@link rebuildDataArrayViews}. Level 1 of the three-level cache lifecycle.
-     */
-    releaseOutputBufferViews (): void
-    /**
      * Remove all references to buffers in this mutex.
      *
      * **WARNING**: This mutex will irreversibly lose the ability to access
@@ -120,6 +114,13 @@ export interface AsymmetricMutex {
      */
     releaseBuffers (): void
     /**
+     * Drop the buffer-backed views and buffer reference but preserve the output
+     * data array layout and meta field definitions, so the mutex can be cheaply
+     * rebound to a fresh buffer via `initialize(newBuffer, start, true)` +
+     * {@link rebuildDataArrayViews}. Level 1 of the three-level cache lifecycle.
+     */
+    releaseOutputBufferViews (): void
+    /**
      * Set a new position for the buffer start.
      *
      * **IMPORTANT**: Any other mutex using this mutex as its input will not implicitly inherit
@@ -127,7 +128,6 @@ export interface AsymmetricMutex {
      * has been called with the updated properties from this mutex.
      *
      * @param position - Position as a 32-bit array index.
-     * @xample
      */
     setBufferStartPosition (position: number): boolean
     /**
@@ -144,7 +144,9 @@ export interface AsymmetricMutex {
      * @param dataArrays - Arrays to set as new data arrays (empty array will remove all current arrays).
      * @returns Success (true/false)
      */
-    setDataArrays (dataArrays?: { constructor: TypedNumberArrayConstructor<SharedArrayBuffer>, length: number }[]): boolean
+    setDataArrays (
+        dataArrays?: { constructor: TypedNumberArrayConstructor<SharedArrayBuffer>, length: number }[]
+    ): boolean
     /**
      * Set data field descriptors or reset their positions if meta fields have changed.
      * @param fields - Optional new fields (if empty, will recalculate positions of existing fields).
@@ -166,15 +168,6 @@ export interface AsymmetricMutex {
      */
     setInputMutexProperties (input: MutexExportProperties): boolean
     /**
-     * Rebuild input-side views (read lock, input meta, input data) whose positions fall inside
-     * one of the given moved regions. Called after the memory manager has rearranged the shared
-     * buffer and the coupled source mutex's region has moved; views outside every moved region
-     * are left untouched.
-     * @param moves - Region moves applied to the underlying buffer, in 32-bit element indices.
-     * @returns Success (true/false)
-     */
-    shiftInputPositions (moves: BufferRangeMove[]): boolean
-    /**
      * Set log printing threshold.
      */
     setLogLevel: typeof Log.setPrintThreshold
@@ -191,6 +184,15 @@ export interface AsymmetricMutex {
      * @returns Success (true/false)
      */
     setMetaFieldValue (field: string, value: number): Promise<boolean>
+    /**
+     * Rebuild input-side views (read lock, input meta, input data) whose positions fall inside
+     * one of the given moved regions. Called after the memory manager has rearranged the shared
+     * buffer and the coupled source mutex's region has moved; views outside every moved region
+     * are left untouched.
+     * @param moves - Region moves applied to the underlying buffer, in 32-bit element indices.
+     * @returns Success (true/false)
+     */
+    shiftInputPositions (moves: BufferRangeMove[]): boolean
     /**
      * Remove a lock for the shared array buffer for the given mode.
      * @param scope - Mutex scope.
@@ -296,7 +298,7 @@ export type MutexScope = 'i' | 'o'
 /**
  * Allowed typed number array types.
  * @remarks
- * Since Atomics operations only work with 32-bit integer arrays and array lengths must be devisible by the array
+ * Since Atomics operations only work with 32-bit integer arrays and array lengths must be divisible by the array
  * element length, smaller than 32-bit elements might cause problems and are not supported. 64-bit element arrays
  * may get support in the future.
  */
@@ -304,10 +306,13 @@ export type TypedNumberArray = Float32Array | Int32Array | Uint32Array
 /**
  * Allowed typed number array constructor types.
  * @remarks
- * Since Atomics operations only work with 32-bit integer arrays and array lengths must be devisible by the array
+ * Since Atomics operations only work with 32-bit integer arrays and array lengths must be divisible by the array
  * element length, smaller than 32-bit elements might cause problems and are not supported. 64-bit element arrays
  * may get support in the future.
  */
+// One line despite the width, because `@ts-expect-error` suppresses only the line that follows it:
+// split across three lines, the second and third constructor report the same error unsuppressed,
+// and a directive cannot be repeated onto a line that does not itself error.
 // @ts-expect-error - Version 5.7 of TypeScript requires array buffer type for typed number arrays.
 export type TypedNumberArrayConstructor<T extends ArrayBufferLike> = Float32ArrayConstructor<T> | Int32ArrayConstructor<T> | Uint32ArrayConstructor<T>
 /**
@@ -315,7 +320,8 @@ export type TypedNumberArrayConstructor<T extends ArrayBufferLike> = Float32Arra
  */
 export type ReadonlyTypedArray = ReadonlyInt32Array | ReadonlyFloat32Array | ReadonlyUint32Array
 /* All number types up to 32 bit for reference
-export type TypedNumberArray = Float32Array | Int8Array | Int16Array | Int32Array | Uint8Array | Uint16Array | Uint32Array
+export type TypedNumberArray = Float32Array | Int8Array | Int16Array | Int32Array |
+                               Uint8Array | Uint16Array | Uint32Array
 export type TypedNumberArrayConstructor = Float32ArrayConstructor |
                                           Int8ArrayConstructor | Int16ArrayConstructor | Int32ArrayConstructor |
                                           Uint8ArrayConstructor | Uint16ArrayConstructor | Uint32ArrayConstructor
